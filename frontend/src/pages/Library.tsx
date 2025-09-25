@@ -105,7 +105,7 @@ export default function Library() {
   const [books, setBooks] = useState(mockBooks);
   const [issuedBooks, setIssuedBooks] = useState(mockIssuedBooks);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
   const [isAddBookDialogOpen, setIsAddBookDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("books");
 
@@ -123,11 +123,15 @@ export default function Library() {
     navigate("/");
   };
 
-  const filteredBooks = books.filter(book =>
-    book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    book.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    book.category.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredBooks = books.filter(book => {
+    const matchesSearch = book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      book.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      book.category.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesCategory = selectedCategory === "all" || book.category === selectedCategory;
+    
+    return matchesSearch && matchesCategory;
+  });
 
   const totalBooks = books.reduce((sum, book) => sum + book.totalCopies, 0);
   const availableBooks = books.reduce((sum, book) => sum + book.availableCopies, 0);
@@ -303,7 +307,7 @@ export default function Library() {
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Categories</SelectItem>
+                  <SelectItem value="all">All Categories</SelectItem>
                   <SelectItem value="Computer Science">Computer Science</SelectItem>
                   <SelectItem value="Mathematics">Mathematics</SelectItem>
                   <SelectItem value="Programming">Programming</SelectItem>
