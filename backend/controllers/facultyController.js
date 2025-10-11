@@ -1,0 +1,409 @@
+import { supabase } from '../config/supabaseClient.js';
+import { supabaseAdmin } from '../config/supabaseAdmin.js'; // Needed for Audit Logging and cross-table inserts
+
+const asyncHandler = (fn) => (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+// ====================================================================
+// CORE UTILITIES
+// ====================================================================
+
+// @desc    Get all classes taught by the current faculty member
+// @route   GET /api/faculty/classes
+export const getFacultyClasses = asyncHandler(async (req, res) => {
+    const facultyId = req.user.id; 
+    
+    // RLS is typically set up to allow the faculty member to only see their own classes, 
+    // but we add the WHERE clause for explicit security and performance.
+    const { data: classes, error } = await supabase
+        .from('classes')
+        .select(`
+            id,
+            name,
+            period_time,
+            subject:subjects(name),
+            student_count:student_classes(count)
+        `)
+        .eq('faculty_id', facultyId);
+    
+    if (error) {
+        console.error('Database fetch error (faculty classes):', error);
+        return res.status(500).json({ message: 'Failed to retrieve faculty classes.' });
+    }
+
+    res.json(classes.map(c => ({
+        id: c.id,
+        name: c.name,
+        time: c.period_time,
+        subjectName: c.subject.name,
+        students: c.student_count[0]?.count || 0
+    })));
+});
+
+// @desc    Get all students enrolled in a specific class
+// @route   GET /api/faculty/grades/students/:classId
+export const getStudentsForClass = asyncHandler(async (req, res) => {
+    const { classId } = req.params;
+    
+    // Fetch all student profiles who are linked to this class
+    const { data: students, error } = await supabase
+        .from('student_classes')
+        .select(`
+            student:student_profiles (
+                user:users(id, first_name, last_name, email),
+                roll_number
+            ),
+            grades:grades(marks_obtained, exam_id)
+        `)
+        .eq('class_id', classId)
+        // RLS will ensure the querying faculty member can only see this data 
+        // if they are linked to classId.
+
+    if (error) {
+        console.error('Database fetch error (students for class):', error);
+        return res.status(500).json({ message: 'Failed to retrieve students for class.' });
+    }
+
+    // Map data to match the structure needed for grade entry
+    const formattedStudents = students.map(sc => ({
+        id: sc.student.user.id,
+        name: `${sc.student.user.first_name} ${sc.student.user.last_name}`,
+        rollNo: sc.student.roll_number,
+        // Grades formatted as {examId: marks}
+        grades: sc.grades.reduce((acc, grade) => {
+            acc[grade.exam_id] = grade.marks_obtained;
+            return acc;
+        }, {})
+    }));
+
+    res.json(formattedStudents);
+});
+
+
+// ====================================================================
+// 1. DASHBOARD & OVERVIEW (src/pages/Dashboard.tsx)
+// ====================================================================
+
+// @route   GET /api/faculty/dashboard/stats
+export const getFacultyDashboardStats = asyncHandler(async (req, res) => {
+    const facultyId = req.user.id;
+
+    // Fetch classes taught by this faculty member
+    const { data: classesRes, error: classesError } = await supabase
+        .from('classes')
+        .select('id, student_classes(count)')
+        .eq('faculty_id', facultyId);
+
+    if (classesError) {
+        console.error('Database fetch error (dashboard stats):', classesError);
+        return res.status(500).json({ message: 'Failed to load faculty stats.' });
+    }
+    
+    const classesTodayCount = classesRes.length;
+    const totalStudentsTaught = classesRes.reduce((sum, c) => sum + (c.student_classes[0]?.count || 0), 0);
+
+    // Mock calculations that require complex, scheduled data
+    res.json({
+        classesToday: classesTodayCount,
+        classesRemaining: Math.max(0, classesTodayCount - 2), // Mock: Assuming 2 classes finished
+        assignmentsPending: 23, // Mock: Requires assignments table aggregation
+        studentsTaught: totalStudentsTaught,
+        attendanceRate: 92.8 // Mock: Requires attendance entries aggregation
+    });
+});
+
+
+// ====================================================================
+// 2. ASSIGNMENT MANAGEMENT (src/pages/FacultyAssignments.tsx)
+// ====================================================================
+
+// NOTE: We need to create an `assignments` table similar to `exams` but dedicated to assignments.
+// For now, we'll use a mocked table structure.
+
+// @route   POST /api/faculty/assignments
+export const createAssignment = asyncHandler(async (req, res) => {
+    const { title, description, classId, dueDate, totalMarks } = req.body;
+    const facultyId = req.user.id;
+    
+    // In a real system, you would verify facultyId matches the classId's faculty_id.
+    
+    // 1. Insert new assignment (Assuming a new 'assignments' table exists)
+    const { data, error } = await supabaseAdmin.from('assignments').insert({
+        faculty_id: facultyId,
+        class_id: classId,
+        title,
+        description,
+        due_date: dueDate,
+        max_marks: totalMarks
+    }).select().single();
+
+    if (error) {
+        console.error('Database insert error (assignment):', error);
+        return res.status(500).json({ message: 'Failed to create assignment.' });
+    }
+
+    // 2. Log the action
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: facultyId,
+        action_type: 'CREATE',
+        table_affected: 'assignments',
+        record_id_affected: data.id
+    });
+
+    res.status(201).json({ 
+        message: 'Assignment created successfully!',
+        assignment: data
+    });
+});
+
+// @route   GET /api/faculty/assignments
+export const getFacultyAssignments = asyncHandler(async (req, res) => {
+    const facultyId = req.user.id;
+
+    // Fetch assignments created by this faculty, joining submission counts (mocked)
+    const { data: assignments, error } = await supabase
+        .from('assignments')
+        .select(`
+            id,
+            title,
+            description,
+            due_date:due_date,
+            max_marks,
+            class:classes(id, name, student_classes(count)),
+            submissions:assignment_submissions(count)
+        `)
+        .eq('faculty_id', facultyId);
+    
+    if (error) {
+        console.error('Database fetch error (assignments):', error);
+        return res.status(500).json({ message: 'Failed to retrieve assignments.' });
+    }
+    
+    const formattedAssignments = assignments.map(a => {
+        const totalStudents = a.class.student_classes[0]?.count || 0;
+        const submissionCount = a.submissions[0]?.count || 0;
+        
+        const now = new Date();
+        const dueDate = new Date(a.due_date);
+        const status = dueDate < now ? 'Completed' : 'Active';
+
+        return {
+            id: a.id,
+            title: a.title,
+            description: a.description,
+            class: a.class.id,
+            className: a.class.name,
+            dueDate: a.due_date,
+            totalMarks: a.max_marks,
+            submissions: submissionCount,
+            totalStudents: totalStudents,
+            status: status
+        };
+    });
+
+    res.json(formattedAssignments);
+});
+
+
+// ====================================================================
+// 3. ATTENDANCE MANAGEMENT (src/pages/FacultyAttendance.tsx)
+// ====================================================================
+
+// controllers/facultyController.js
+
+// ... (existing code up to getAttendanceForClass)
+
+// @route   GET /api/faculty/attendance/class/:classId
+export const getAttendanceForClass = asyncHandler(async (req, res) => {
+    const { classId } = req.params;
+    const { date } = req.query; 
+    
+    // 1. Fetch existing attendance record header
+    const { data: record, error: recordError } = await supabase
+        .from('attendance_records')
+        .select('id, is_submitted')
+        .eq('class_id', classId)
+        .eq('record_date', date)
+        .single();
+    
+    let recordId = record?.id;
+    
+    // 2. Fetch all students for the class (RLS check is implicit)
+    const { data: studentsData, error: studentsError } = await supabase
+        .from('student_classes')
+        .select(`
+            student_id,
+            student:student_profiles (
+                roll_number, 
+                user:users(first_name, last_name)
+            )
+        `)
+        .eq('class_id', classId);
+    
+    if (studentsError) {
+        console.error('Database fetch error (attendance students):', studentsError);
+        return res.status(500).json({ message: 'Failed to retrieve class list.' });
+    }
+    
+    // ... (existing code for fetching existingEntries)
+
+    let existingEntries = {};
+    if (recordId) {
+        // ... (existing entries fetching logic)
+        const { data: entries, error: entriesError } = await supabase
+            .from('attendance_entries')
+            .select('student_id, status')
+            .eq('record_id', recordId);
+            
+        if (entriesError) {
+             console.error('Database fetch error (attendance entries):', entriesError);
+             return res.status(500).json({ message: 'Failed to retrieve existing attendance entries.' });
+        }
+
+        existingEntries = entries.reduce((acc, entry) => {
+            acc[entry.student_id] = entry.status === 'present'; 
+            return acc;
+        }, {});
+    }
+
+
+    // 3. APPLY FIX: Add defensive checks (sc.student and sc.student.user)
+    const formattedData = studentsData.map(sc => {
+        // Check for missing student_profiles record or users record
+        if (!sc.student || !sc.student.user) {
+             console.warn(`Missing profile/user data for enrollment ID: ${sc.student_id}.`);
+             return {
+                id: sc.student_id,
+                name: "UNKNOWN USER (Missing Profile)",
+                rollNo: "N/A",
+                present: false // Default to absent for safety
+             };
+        }
+        
+        return {
+            id: sc.student_id,
+            name: `${sc.student.user.first_name} ${sc.student.user.last_name}`,
+            rollNo: sc.student.roll_number,
+            present: existingEntries[sc.student_id] === undefined ? true : existingEntries[sc.student_id] 
+        };
+    });
+
+    res.json({
+        students: formattedData,
+        isSubmitted: record?.is_submitted || false
+    });
+});
+
+// @route   POST /api/faculty/attendance/save
+export const saveAttendance = asyncHandler(async (req, res) => {
+    const { classId, date, attendance } = req.body; // attendance is an array of { studentId, isPresent }
+    const facultyId = req.user.id;
+    
+    // 1. Create or get attendance_records header
+    const { data: record, error: upsertError } = await supabaseAdmin.from('attendance_records').upsert({
+        class_id: classId,
+        record_date: date,
+        faculty_id: facultyId,
+        is_submitted: true // Mark as submitted immediately on save
+    }, { onConflict: 'class_id, record_date' }).select('id').single();
+
+    if (upsertError) {
+        console.error('Database upsert error (attendance records):', upsertError);
+        return res.status(500).json({ message: 'Failed to save attendance record header.' });
+    }
+    
+    const recordId = record.id;
+    
+    // 2. Prepare attendance entries for batch upsert
+    const entries = attendance.map(entry => ({
+        record_id: recordId,
+        student_id: entry.studentId,
+        status: entry.isPresent ? 'present' : 'absent'
+    }));
+
+    // 3. Batch upsert attendance_entries
+    const { error: batchError } = await supabaseAdmin.from('attendance_entries').upsert(entries, {
+        onConflict: 'record_id, student_id'
+    });
+
+    if (batchError) {
+        // Log the batch error but still return success for robustness if header saved
+        console.error('Database batch upsert error (attendance entries):', batchError);
+        return res.status(500).json({ message: 'Attendance saved, but some student entries may have failed.' });
+    }
+    
+    // 4. Log the action (Grouping multiple actions into one audit log)
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: facultyId,
+        action_type: 'ATTENDANCE_BATCH_SAVE',
+        table_affected: 'attendance_records',
+        record_id_affected: recordId,
+        details: { count: entries.length, date: date }
+    });
+
+    res.status(200).json({ message: 'Attendance saved successfully!' });
+});
+
+
+// ====================================================================
+// 4. GRADES MANAGEMENT (src/pages/FacultyGrades.tsx)
+// ====================================================================
+
+// @route   GET /api/faculty/grades/exams/:classId
+export const getExamsForClass = asyncHandler(async (req, res) => {
+    const { classId } = req.params;
+    
+    const { data: exams, error } = await supabase
+        .from('exams')
+        .select('*')
+        .eq('class_id', classId)
+        .order('exam_date');
+        
+    if (error) {
+        console.error('Database fetch error (exams for class):', error);
+        return res.status(500).json({ message: 'Failed to retrieve exams for class.' });
+    }
+    
+    // Map to a simpler structure needed for the dropdown (src/pages/FacultyGrades.tsx mockExams)
+    res.json(exams.map(e => ({
+        id: e.id,
+        name: e.name,
+        maxMarks: e.max_marks,
+        type: e.exam_type
+    })));
+});
+
+// @route   POST /api/faculty/grades/save
+export const saveStudentGrades = asyncHandler(async (req, res) => {
+    const { examId, grades } = req.body; // grades is { studentId: marks, ... }
+    const facultyId = req.user.id;
+    
+    // 1. Prepare batch upsert payload
+    const entries = Object.entries(grades).map(([studentId, marks]) => ({
+        exam_id: examId,
+        student_id: studentId,
+        marks_obtained: marks // Marks validation should ideally happen here or on client
+    }));
+
+    // 2. Batch upsert grades
+    const { error: batchError } = await supabaseAdmin.from('grades').upsert(entries, {
+        onConflict: 'exam_id, student_id'
+    });
+    
+    if (batchError) {
+        console.error('Database batch upsert error (grades):', batchError);
+        return res.status(500).json({ message: 'Failed to save student grades.' });
+    }
+    
+    // 3. Log the action
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: facultyId,
+        action_type: 'GRADES_BATCH_SAVE',
+        table_affected: 'grades',
+        record_id_affected: examId,
+        details: { count: entries.length }
+    });
+
+    res.status(200).json({ message: 'Grades saved successfully!' });
+});

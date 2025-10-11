@@ -147,7 +147,7 @@ export default function Index() {
               <span className="text-xl font-bold">EduManage Pro</span>
             </div>
             <p className="text-muted-foreground text-center md:text-right">
-              © 2024 EduManage Pro. All rights reserved.
+              © 2025 EduManage Pro. All rights reserved.
             </p>
           </div>
         </div>
