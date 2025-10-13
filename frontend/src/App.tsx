@@ -20,6 +20,7 @@ import StudentDashboard from "./pages/StudentDashboard";
 import StudentAttendance from "./pages/StudentAttendance";
 import StudentResults from "./pages/StudentResults";
 import StudentFees from "./pages/StudentFees";
+import ClassAssignment from "./pages/ClassAssignment";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const App = () => (
           <Route path="/results" element={<Results />} />
           <Route path="/fees" element={<Fees />} />
           <Route path="/library" element={<Library />} />
+          <Route path="/class-assignment" element={<ClassAssignment />} />
           <Route path="/settings" element={<Settings />} />
           
           {/* Faculty specific routes */}

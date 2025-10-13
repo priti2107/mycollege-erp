@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Trophy, TrendingUp, Download, Eye, Filter, Users } from "lucide-react";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -86,8 +87,8 @@ export default function Results() {
   const [user, setUser] = useState<any>(null);
   const [selectedSemester, setSelectedSemester] = useState("");
   const [selectedCourse, setSelectedCourse] = useState("");
-  const [results, setResults] = useState(mockResults);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -97,6 +98,52 @@ export default function Results() {
     }
     setUser(JSON.parse(userData));
   }, [navigate]);
+
+  // Build query params for filtering
+  const queryParams = new URLSearchParams();
+  if (selectedCourse) queryParams.append('courseId', selectedCourse);
+  if (selectedSemester) queryParams.append('semester', selectedSemester);
+  const queryString = queryParams.toString();
+
+  // Fetch results data based on user role
+  const resultsEndpoint = user?.role === 'student' 
+    ? '/student/results' 
+    : `/admin/results${queryString ? `?${queryString}` : ''}`;
+    
+  const { data: resultsResponse, isLoading, error, refetch } = useApiQuery(
+    resultsEndpoint,
+    ['results', user?.role, selectedCourse, selectedSemester],
+    { enabled: !!user }
+  );
+
+  // Fetch courses for filter dropdown
+  const { data: coursesData } = useApiQuery(
+    '/admin/courses',
+    ['courses'],
+    { enabled: !!user && user.role !== 'student' }
+  );
+
+  // Handle different data structures from backend
+  let results = [];
+  if (user?.role === 'student') {
+    // For students, the API returns exam data with different structure
+    results = resultsResponse?.exams || [];
+  } else {
+    // For admin, it returns student results array directly
+    results = Array.isArray(resultsResponse) ? resultsResponse : [];
+  }
+
+  const courses = coursesData?.courses || [];
+
+  // Fetch detailed results for selected student
+  const { data: detailedResults, isLoading: detailedLoading } = useApiQuery(
+    `/admin/students/${selectedStudentId}/results`,
+    ['studentDetailedResults', selectedStudentId],
+    { enabled: !!selectedStudentId && !!user }
+  );
+
+  console.log('Results data:', results);
+  console.log('Detailed results:', detailedResults);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
@@ -114,11 +161,54 @@ export default function Results() {
     }
   };
 
-  const averagePercentage = (results.reduce((sum, student) => sum + student.percentage, 0) / results.length).toFixed(1);
-  const topPerformer = results.find(student => student.rank === 1);
-  const passRate = ((results.filter(student => student.percentage >= 40).length / results.length) * 100).toFixed(1);
+  // Calculate stats based on user role and data structure
+  let averagePercentage = "0";
+  let topPerformer = null;
+  let passRate = "0";
+
+  if (user?.role === 'student') {
+    // For student view, calculate from exam data
+    if (results.length > 0) {
+      const percentages = results.map((exam: any) => {
+        if (exam.totalMarks > 0) {
+          return (exam.obtainedMarks / exam.totalMarks) * 100;
+        }
+        return 0;
+      });
+      averagePercentage = (percentages.reduce((sum: number, p: number) => sum + p, 0) / percentages.length).toFixed(1);
+      topPerformer = { cgpa: Math.max(...percentages) / 10 };
+      passRate = ((percentages.filter((p: number) => p >= 40).length / percentages.length) * 100).toFixed(1);
+    }
+  } else {
+    // For admin view, calculate from student data
+    if (results.length > 0) {
+      averagePercentage = (results.reduce((sum: number, student: any) => sum + (student.percentage || 0), 0) / results.length).toFixed(1);
+      topPerformer = results.find((student: any) => student.rank === 1) || { cgpa: 0 };
+      passRate = ((results.filter((student: any) => (student.percentage || 0) >= 40).length / results.length) * 100).toFixed(1);
+    }
+  }
 
   if (!user) return null;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading results...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Error fetching results: {error.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
@@ -213,10 +303,11 @@ export default function Results() {
                       <SelectValue placeholder="Select course" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cs">Computer Science</SelectItem>
-                      <SelectItem value="math">Mathematics</SelectItem>
-                      <SelectItem value="physics">Physics</SelectItem>
-                      <SelectItem value="chemistry">Chemistry</SelectItem>
+                      {courses.map((course: any) => (
+                        <SelectItem key={course.id} value={course.id}>
+                          {course.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -237,7 +328,7 @@ export default function Results() {
                   </Select>
                 </div>
                 <div className="flex items-end">
-                  <Button variant="outline">
+                  <Button variant="outline" onClick={() => refetch()}>
                     <Filter className="w-4 h-4 mr-2" />
                     Apply Filter
                   </Button>
@@ -310,7 +401,10 @@ export default function Results() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedStudent(student)}>
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          setSelectedStudentId(student.id);
+                          setSelectedStudent(student);
+                        }}>
                           <Eye className="w-4 h-4" />
                         </Button>
                         <Button variant="ghost" size="sm">
@@ -326,30 +420,65 @@ export default function Results() {
         </Card>
 
         {/* Subject-wise Details Modal */}
-        {selectedStudent && (
+        {selectedStudent && selectedStudentId && (
           <Card className="erp-card">
             <CardHeader>
               <CardTitle>{selectedStudent.name} - Subject-wise Results</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4">
-                {selectedStudent.subjects.map((subject: any, index: number) => (
-                  <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div>
-                      <h4 className="font-medium">{subject.name}</h4>
-                      <p className="text-sm text-muted-foreground">
-                        {subject.marks}/{subject.total} marks
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <Progress value={(subject.marks / subject.total) * 100} className="w-20 h-2" />
-                      <Badge className={getGradeColor(subject.grade)}>{subject.grade}</Badge>
-                    </div>
+              {detailedLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <p>Loading subject details...</p>
+                </div>
+              ) : detailedResults && detailedResults.subjects ? (
+                <>
+                  <div className="grid gap-4">
+                    {detailedResults.subjects.map((subject: any, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
+                        <div>
+                          <h4 className="font-medium">{subject.subjectName}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {subject.obtainedMarks}/{subject.maxMarks} marks • {subject.examType}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <Progress value={subject.percentage} className="w-20 h-2" />
+                          <Badge className={getGradeColor(subject.grade)}>{subject.grade}</Badge>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                  {detailedResults.summary && (
+                    <div className="mt-4 pt-4 border-t">
+                      <div className="grid grid-cols-3 gap-4 mb-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Total Marks</p>
+                          <p className="text-lg font-bold">
+                            {detailedResults.summary.totalObtained}/{detailedResults.summary.totalMax}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Overall Percentage</p>
+                          <p className="text-lg font-bold">{detailedResults.summary.percentage}%</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Total Subjects</p>
+                          <p className="text-lg font-bold">{detailedResults.summary.totalSubjects}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  No subject details available
+                </div>
+              )}
               <div className="mt-4 pt-4 border-t">
-                <Button variant="outline" onClick={() => setSelectedStudent(null)}>
+                <Button variant="outline" onClick={() => {
+                  setSelectedStudent(null);
+                  setSelectedStudentId(null);
+                }}>
                   Close
                 </Button>
               </div>

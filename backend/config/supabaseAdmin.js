@@ -15,8 +15,17 @@ if (!supabaseUrl || !supabaseServiceKey) {
 // Initialize the Supabase Client with the Service Role Key
 export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
-        persistSession: false 
+        persistSession: false,
+        detectSessionInUrl: false
+    },
+    global: {
+        fetch: (url, options) => {
+            return fetch(url, {
+                ...options,
+                signal: AbortSignal.timeout(15000) // 15 second timeout
+            });
+        }
     }
 });
 
-console.log('Supabase Admin Client (Service Role Key) Initialized.');
+console.log('Supabase Admin Client (Service Role Key) Initialized with 15s timeout.');

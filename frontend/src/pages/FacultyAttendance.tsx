@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Calendar, Users, Check, X, Save, BookOpen } from "lucide-react";
+import { useApiQuery, useApiMutation } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,21 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-
-// Mock data
-const mockClasses = [
-  { id: "CS101", name: "Data Structures", time: "09:00 AM", students: 45 },
-  { id: "CS201", name: "Algorithms", time: "11:00 AM", students: 38 },
-  { id: "CS301", name: "Machine Learning", time: "02:00 PM", students: 32 }
-];
-
-const mockStudents = [
-  { id: "STU001", name: "John Smith", rollNo: "CS2021001", course: "Computer Science" },
-  { id: "STU002", name: "Emma Johnson", rollNo: "CS2021002", course: "Computer Science" },
-  { id: "STU003", name: "Michael Brown", rollNo: "CS2021003", course: "Computer Science" },
-  { id: "STU004", name: "Sarah Davis", rollNo: "CS2021004", course: "Computer Science" },
-  { id: "STU005", name: "David Wilson", rollNo: "CS2021005", course: "Computer Science" }
-];
 
 export default function FacultyAttendance() {
   const navigate = useNavigate();
@@ -53,6 +39,23 @@ export default function FacultyAttendance() {
     setUser(parsedUser);
   }, [navigate]);
 
+  // Fetch faculty classes
+  const { data: classesData, isLoading: classesLoading } = useApiQuery(
+    '/faculty/classes',
+    ['faculty-classes'],
+    { enabled: !!user }
+  );
+
+  // Fetch student roster for selected class
+  const { data: studentsData, isLoading: studentsLoading } = useApiQuery(
+    `/faculty/attendance/class/${selectedClass}?date=${selectedDate}`,
+    ['faculty-class-roster', selectedClass, selectedDate],
+    { enabled: !!user && !!selectedClass }
+  );
+
+  const classes = classesData || [];
+  const students = studentsData || [];
+
   const handleLogout = () => {
     localStorage.removeItem("user");
     navigate("/");
@@ -67,7 +70,7 @@ export default function FacultyAttendance() {
 
   const handleMarkAll = (present: boolean) => {
     const newAttendance: Record<string, boolean> = {};
-    mockStudents.forEach(student => {
+    students.forEach(student => {
       newAttendance[student.id] = present;
     });
     setAttendance(newAttendance);
@@ -83,7 +86,7 @@ export default function FacultyAttendance() {
     }
 
     const presentCount = Object.values(attendance).filter(Boolean).length;
-    const totalCount = mockStudents.length;
+    const totalCount = students.length;
 
     toast({
       title: "Attendance saved successfully!",
@@ -96,7 +99,7 @@ export default function FacultyAttendance() {
   };
 
   const presentCount = Object.values(attendance).filter(Boolean).length;
-  const totalStudents = mockStudents.length;
+  const totalStudents = students.length;
   const attendancePercentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
 
   if (!user) return null;
@@ -129,7 +132,7 @@ export default function FacultyAttendance() {
                     <SelectValue placeholder="Select a class" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockClasses.map((cls) => (
+                    {classes.map((cls) => (
                       <SelectItem key={cls.id} value={cls.id}>
                         {cls.name} - {cls.time}
                       </SelectItem>
@@ -233,7 +236,7 @@ export default function FacultyAttendance() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {mockStudents.map((student) => (
+                  {students.map((student) => (
                     <div key={student.id} className="flex items-center justify-between p-4 rounded-lg border hover:bg-muted/50 transition-colors">
                       <div className="flex items-center gap-4">
                         <Avatar>

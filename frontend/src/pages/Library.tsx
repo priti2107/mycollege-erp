@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Book, Search, Filter, Eye, Download, Plus, BookOpen, Clock } from "lucide-react";
+import { useApiQuery, useApiMutation } from "@/hooks/useApiQuery";
+import { useToast } from "@/hooks/use-toast";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,13 +103,19 @@ const mockIssuedBooks = [
 
 export default function Library() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
-  const [books, setBooks] = useState(mockBooks);
-  const [issuedBooks, setIssuedBooks] = useState(mockIssuedBooks);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isAddBookDialogOpen, setIsAddBookDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("books");
+  const [newBook, setNewBook] = useState({
+    title: "",
+    author: "",
+    isbn: "",
+    category: "",
+    totalCopies: ""
+  });
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -118,9 +126,70 @@ export default function Library() {
     setUser(JSON.parse(userData));
   }, [navigate]);
 
+  // Fetch library data from API
+  const { data: libraryData, isLoading, error, refetch } = useApiQuery(
+    '/admin/library/catalog',
+    ['library'],
+    { enabled: !!user }
+  );
+
+  // Fetch departments for category dropdown
+  const { data: departmentsData } = useApiQuery(
+    '/admin/departments',
+    ['departments'],
+    { enabled: !!user }
+  );
+
+  // Book creation mutation
+  const createBookMutation = useApiMutation('/admin/library/books', 'POST');
+
+  const books = libraryData || []; // Backend returns array directly
+  const issuedBooks = []; // This needs a separate endpoint or should be included in the library response
+  const departments = departmentsData?.departments || [];
+
   const handleLogout = () => {
     localStorage.removeItem("user");
     navigate("/");
+  };
+
+  const handleAddBook = async () => {
+    if (!newBook.title || !newBook.author || !newBook.totalCopies) {
+      toast({
+        title: "Please fill all required fields",
+        description: "Title, author, and total copies are required",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await createBookMutation.mutateAsync({
+        title: newBook.title,
+        author: newBook.author,
+        isbn: newBook.isbn,
+        category: newBook.category,
+        totalCopies: parseInt(newBook.totalCopies)
+      });
+
+      toast({
+        title: "Book added successfully",
+      });
+      setIsAddBookDialogOpen(false);
+      setNewBook({
+        title: "",
+        author: "",
+        isbn: "",
+        category: "",
+        totalCopies: ""
+      });
+      refetch();
+    } catch (error) {
+      toast({
+        title: "Failed to add book",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
   };
 
   const filteredBooks = books.filter(book => {
@@ -139,6 +208,26 @@ export default function Library() {
   const overdueBooks = issuedBooks.filter(book => book.status === 'Overdue').length;
 
   if (!user) return null;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading library data...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Error fetching library data: {error.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
@@ -172,40 +261,62 @@ export default function Library() {
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
                       <Label htmlFor="title">Book Title</Label>
-                      <Input id="title" placeholder="Enter book title" />
+                      <Input 
+                        id="title" 
+                        placeholder="Enter book title"
+                        value={newBook.title}
+                        onChange={(e) => setNewBook({...newBook, title: e.target.value})}
+                      />
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="author">Author</Label>
-                      <Input id="author" placeholder="Enter author name" />
+                      <Input 
+                        id="author" 
+                        placeholder="Enter author name"
+                        value={newBook.author}
+                        onChange={(e) => setNewBook({...newBook, author: e.target.value})}
+                      />
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="isbn">ISBN</Label>
-                      <Input id="isbn" placeholder="Enter ISBN" />
+                      <Input 
+                        id="isbn" 
+                        placeholder="Enter ISBN"
+                        value={newBook.isbn}
+                        onChange={(e) => setNewBook({...newBook, isbn: e.target.value})}
+                      />
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="category">Category</Label>
-                      <Select>
+                      <Select value={newBook.category} onValueChange={(value) => setNewBook({...newBook, category: value})}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select category" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="cs">Computer Science</SelectItem>
-                          <SelectItem value="math">Mathematics</SelectItem>
-                          <SelectItem value="physics">Physics</SelectItem>
-                          <SelectItem value="chemistry">Chemistry</SelectItem>
+                          {departments.map((dept: any) => (
+                            <SelectItem key={dept.id} value={dept.name}>
+                              {dept.name}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="copies">Number of Copies</Label>
-                      <Input id="copies" type="number" placeholder="Enter number of copies" />
+                      <Input 
+                        id="copies" 
+                        type="number" 
+                        placeholder="Enter number of copies"
+                        value={newBook.totalCopies}
+                        onChange={(e) => setNewBook({...newBook, totalCopies: e.target.value})}
+                      />
                     </div>
                   </div>
                   <div className="flex gap-2">
                     <Button variant="outline" className="flex-1" onClick={() => setIsAddBookDialogOpen(false)}>
                       Cancel
                     </Button>
-                    <Button className="flex-1 erp-gradient-bg" onClick={() => setIsAddBookDialogOpen(false)}>
+                    <Button className="flex-1 erp-gradient-bg" onClick={handleAddBook}>
                       Add Book
                     </Button>
                   </div>
@@ -308,8 +419,11 @@ export default function Library() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
-                  <SelectItem value="Computer Science">Computer Science</SelectItem>
-                  <SelectItem value="Mathematics">Mathematics</SelectItem>
+                  {departments.map((dept: any) => (
+                    <SelectItem key={dept.id} value={dept.name}>
+                      {dept.name}
+                    </SelectItem>
+                  ))}
                   <SelectItem value="Programming">Programming</SelectItem>
                 </SelectContent>
               </Select>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Upload, Download, Calendar, BookOpen, Edit, Trash2, Eye } from "lucide-react";
+import { useApiQuery, useApiMutation } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,7 +84,6 @@ export default function FacultyAssignments() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
-  const [assignments, setAssignments] = useState(mockAssignments);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [newAssignment, setNewAssignment] = useState({
     title: "",
@@ -107,12 +107,30 @@ export default function FacultyAssignments() {
     setUser(parsedUser);
   }, [navigate]);
 
+  // Fetch assignments from API
+  const { data: assignments, isLoading: assignmentsLoading, error: assignmentsError } = useApiQuery(
+    '/faculty/assignments',
+    ['faculty-assignments'],
+    { enabled: !!user }
+  );
+
+  // Fetch classes from API
+  const { data: classes, isLoading: classesLoading, error: classesError } = useApiQuery(
+    '/faculty/classes',
+    ['faculty-classes'],
+    { enabled: !!user }
+  );
+
+  // Create assignment mutation
+  const createAssignmentMutation = useApiMutation('/faculty/assignments', 'POST');
+
   const handleLogout = () => {
     localStorage.removeItem("user");
+    localStorage.removeItem("token");
     navigate("/");
   };
 
-  const handleCreateAssignment = () => {
+  const handleCreateAssignment = async () => {
     if (!newAssignment.title || !newAssignment.class || !newAssignment.dueDate) {
       toast({
         title: "Please fill all required fields",
@@ -121,24 +139,28 @@ export default function FacultyAssignments() {
       return;
     }
 
-    const assignment = {
-      id: `ASSGN${String(assignments.length + 1).padStart(3, '0')}`,
-      ...newAssignment,
-      className: mockClasses.find(c => c.id === newAssignment.class)?.name || "",
-      submissions: 0,
-      totalStudents: mockClasses.find(c => c.id === newAssignment.class)?.students || 0,
-      status: "Active",
-      totalMarks: parseInt(newAssignment.totalMarks) || 100
-    };
+    try {
+      const assignmentData = {
+        ...newAssignment,
+        totalMarks: parseInt(newAssignment.totalMarks) || 100
+      };
 
-    setAssignments([assignment, ...assignments]);
-    setNewAssignment({ title: "", description: "", class: "", dueDate: "", totalMarks: "" });
-    setIsAddDialogOpen(false);
+      await createAssignmentMutation.mutateAsync(assignmentData);
+      
+      setNewAssignment({ title: "", description: "", class: "", dueDate: "", totalMarks: "" });
+      setIsAddDialogOpen(false);
 
-    toast({
-      title: "Assignment created successfully!",
-      description: `${assignment.title} has been assigned to ${assignment.className}`,
-    });
+      toast({
+        title: "Assignment created successfully!",
+        description: `${assignmentData.title} has been created`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to create assignment",
+        description: error.message || "Something went wrong",
+        variant: "destructive",
+      });
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -158,6 +180,30 @@ export default function FacultyAssignments() {
   };
 
   if (!user) return null;
+
+  if (assignmentsLoading || classesLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (assignmentsError || classesError) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Error fetching data: {(assignmentsError || classesError)?.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Use API data or fallback to mock data
+  const assignmentsData = assignments || mockAssignments;
+  const classesData = classes || mockClasses;
 
   return (
     <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
@@ -212,7 +258,7 @@ export default function FacultyAssignments() {
                         <SelectValue placeholder="Select class" />
                       </SelectTrigger>
                       <SelectContent>
-                        {mockClasses.map((cls) => (
+                        {classesData.map((cls: any) => (
                           <SelectItem key={cls.id} value={cls.id}>
                             {cls.name}
                           </SelectItem>
@@ -262,7 +308,7 @@ export default function FacultyAssignments() {
                   <BookOpen className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{assignments.length}</p>
+                  <p className="text-2xl font-bold">{assignmentsData.length}</p>
                   <p className="text-sm text-muted-foreground">Total Assignments</p>
                 </div>
               </div>
@@ -275,7 +321,7 @@ export default function FacultyAssignments() {
                   <Calendar className="w-6 h-6 text-accent-foreground" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{assignments.filter(a => a.status === 'Active').length}</p>
+                  <p className="text-2xl font-bold">{assignmentsData.filter((a: any) => a.status === 'Active').length}</p>
                   <p className="text-sm text-muted-foreground">Active</p>
                 </div>
               </div>
@@ -304,8 +350,8 @@ export default function FacultyAssignments() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">
-                    {Math.round((assignments.reduce((sum, a) => sum + a.submissions, 0) / 
-                    assignments.reduce((sum, a) => sum + a.totalStudents, 0)) * 100) || 0}%
+                    {Math.round((assignmentsData.reduce((sum: number, a: any) => sum + a.submissions, 0) / 
+                    assignmentsData.reduce((sum: number, a: any) => sum + a.totalStudents, 0)) * 100) || 0}%
                   </p>
                   <p className="text-sm text-muted-foreground">Submission Rate</p>
                 </div>
@@ -317,7 +363,7 @@ export default function FacultyAssignments() {
         {/* Assignments Table */}
         <Card className="erp-card">
           <CardHeader>
-            <CardTitle>All Assignments ({assignments.length})</CardTitle>
+            <CardTitle>All Assignments ({assignmentsData.length})</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
@@ -333,7 +379,7 @@ export default function FacultyAssignments() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {assignments.map((assignment) => {
+                {assignmentsData.map((assignment: any) => {
                   const daysRemaining = getDaysRemaining(assignment.dueDate);
                   return (
                     <TableRow key={assignment.id}>

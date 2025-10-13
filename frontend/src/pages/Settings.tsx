@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, Lock, Bell, Globe, Palette, Shield, Database, Mail } from "lucide-react";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +51,15 @@ export default function Settings() {
       role: parsedUser.role
     });
   }, [navigate]);
+
+  // Fetch departments for dropdown
+  const { data: departmentsData } = useApiQuery(
+    '/admin/departments',
+    ['departments'],
+    { enabled: !!user }
+  );
+
+  const departments = departmentsData?.departments || [];
 
   const handleLogout = () => {
     localStorage.removeItem("user");
@@ -143,9 +153,11 @@ export default function Settings() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Computer Science">Computer Science</SelectItem>
-                        <SelectItem value="Mathematics">Mathematics</SelectItem>
-                        <SelectItem value="Physics">Physics</SelectItem>
+                        {departments.map((dept: any) => (
+                          <SelectItem key={dept.id} value={dept.name}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
                         <SelectItem value="Chemistry">Chemistry</SelectItem>
                       </SelectContent>
                     </Select>

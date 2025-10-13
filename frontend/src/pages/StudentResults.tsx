@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,15 +77,38 @@ const mockAssignments = [
 ];
 
 export default function StudentResults() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedType, setSelectedType] = useState("all");
   const [activeTab, setActiveTab] = useState("exams");
 
+  useEffect(() => {
+    const userData = localStorage.getItem("user");
+    if (!userData) {
+      navigate("/");
+      return;
+    }
+    setUser(JSON.parse(userData));
+  }, [navigate]);
+
+  // Fetch student results data from API
+  const { data: resultsData, isLoading, error } = useApiQuery(
+    '/student/results',
+    ['student-results'],
+    { enabled: !!user }
+  );
+
+  const exams = resultsData?.exams || [];
+  const assignments = resultsData?.assignments || [];
+
   const handleLogout = () => {
-    console.log("Logging out...");
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
+    navigate("/");
   };
 
-  const filteredExams = mockExams.filter(exam => {
+  const filteredExams = exams.filter(exam => {
     const matchesSearch = exam.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          exam.type.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = selectedType === "all" || exam.type.toLowerCase() === selectedType.toLowerCase();
@@ -106,7 +131,7 @@ export default function StudentResults() {
   };
 
   const overallStats = {
-    averagePercentage: mockExams.filter(e => e.status === 'completed').reduce((sum, exam) => sum + exam.percentage, 0) / mockExams.filter(e => e.status === 'completed').length,
+    averagePercentage: exams.filter(e => e.status === 'completed').reduce((sum, exam) => sum + exam.percentage, 0) / exams.filter(e => e.status === 'completed').length,
     bestSubject: "Chemistry",
     currentRank: 3,
     totalStudents: 45,
@@ -329,7 +354,7 @@ export default function StudentResults() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {mockAssignments.map((assignment, index) => (
+                {assignments.map((assignment, index) => (
                   <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
                     <div>
                       <h4 className="font-medium">{assignment.name}</h4>

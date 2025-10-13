@@ -1,76 +1,62 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CreditCard, Search, User, Calendar, Download, AlertCircle, CheckCircle } from "lucide-react";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 
-const mockStudent = {
-  name: "John Smith",
-  email: "john.smith@student.edu",
-  role: "Student",
-  class: "12th Grade - Science",
-  rollNumber: "STU001",
-};
-
-const mockFeeStructure = [
-  { category: "Tuition Fee", amount: 15000, dueDate: "2024-01-31", status: "paid" },
-  { category: "Library Fee", amount: 500, dueDate: "2024-01-31", status: "paid" },
-  { category: "Lab Fee", amount: 2000, dueDate: "2024-01-31", status: "paid" },
-  { category: "Sports Fee", amount: 1000, dueDate: "2024-01-31", status: "paid" },
-  { category: "Examination Fee", amount: 1500, dueDate: "2024-02-15", status: "pending" },
-  { category: "Transport Fee", amount: 3000, dueDate: "2024-02-28", status: "pending" },
-];
-
-const mockPaymentHistory = [
-  {
-    id: "PAY001",
-    date: "2024-01-28",
-    amount: 18500,
-    category: "Term 1 Fees",
-    method: "Online",
-    status: "completed",
-    receiptNo: "RCP001",
-  },
-  {
-    id: "PAY002",
-    date: "2023-10-28",
-    amount: 18500,
-    category: "Previous Term",
-    method: "Bank Transfer",
-    status: "completed",
-    receiptNo: "RCP002",
-  },
-  {
-    id: "PAY003",
-    date: "2023-07-28",
-    amount: 18500,
-    category: "Previous Term",
-    method: "Online",
-    status: "completed",
-    receiptNo: "RCP003",
-  },
-];
-
 export default function StudentFees() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [activeTab, setActiveTab] = useState("current");
 
+  useEffect(() => {
+    const userData = localStorage.getItem("user");
+    if (!userData) {
+      navigate("/");
+      return;
+    }
+    setUser(JSON.parse(userData));
+  }, [navigate]);
+
+  // Fetch current fee structure
+  const { data: currentFees, isLoading: isCurrentLoading, error: currentError } = useApiQuery(
+    '/student/fees/current',
+    ['student-fees-current'],
+    { enabled: !!user }
+  );
+
+  // Fetch payment history
+  const { data: paymentHistory, isLoading: isHistoryLoading, error: historyError } = useApiQuery(
+    '/student/fees/history',
+    ['student-fees-history'],
+    { enabled: !!user }
+  );
+
   const handleLogout = () => {
-    console.log("Logging out...");
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
+    navigate("/");
   };
 
-  const filteredFees = mockFeeStructure.filter(fee => {
+  // Use API data
+  const feeStructure = currentFees || [];
+  const payments = paymentHistory || [];
+
+  const filteredFees = feeStructure.filter((fee: any) => {
     const matchesSearch = fee.category.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = selectedStatus === "all" || fee.status === selectedStatus;
     
     return matchesSearch && matchesStatus;
   });
 
-  const filteredPayments = mockPaymentHistory.filter(payment => {
+  const filteredPayments = payments.filter((payment: any) => {
     const matchesSearch = payment.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          payment.receiptNo.toLowerCase().includes(searchTerm.toLowerCase());
     
@@ -97,12 +83,35 @@ export default function StudentFees() {
     }
   };
 
-  const totalFees = mockFeeStructure.reduce((sum, fee) => sum + fee.amount, 0);
-  const paidFees = mockFeeStructure.filter(fee => fee.status === "paid").reduce((sum, fee) => sum + fee.amount, 0);
-  const pendingFees = mockFeeStructure.filter(fee => fee.status === "pending").reduce((sum, fee) => sum + fee.amount, 0);
+  // Recalculate fee totals from fetched data
+  const totalFees = feeStructure.reduce((sum: number, fee: any) => sum + fee.amount, 0);
+  const paidFees = feeStructure.filter((fee: any) => fee.status === "paid").reduce((sum: number, fee: any) => sum + fee.amount, 0);
+  const pendingFees = feeStructure.filter((fee: any) => fee.status === "pending").reduce((sum: number, fee: any) => sum + fee.amount, 0);
+
+  if (!user) return null;
+
+  if (isCurrentLoading || isHistoryLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (currentError || historyError) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Error fetching data: {(currentError || historyError)?.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
-    <DashboardLayout userRole="student" user={mockStudent} onLogout={handleLogout}>
+    <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -207,7 +216,7 @@ export default function StudentFees() {
 
               {/* Fee Structure */}
               <div className="space-y-4">
-                {filteredFees.map((fee, index) => (
+                {filteredFees.map((fee: any, index: number) => (
                   <div key={index} className="flex items-center justify-between p-4 border rounded-lg hover:shadow-sm transition-shadow">
                     <div className="flex items-center space-x-4">
                       {getStatusIcon(fee.status)}
@@ -283,7 +292,7 @@ export default function StudentFees() {
 
               {/* Payment Records */}
               <div className="space-y-4">
-                {filteredPayments.map((payment) => (
+                {filteredPayments.map((payment: any) => (
                   <div key={payment.id} className="flex items-center justify-between p-4 border rounded-lg">
                     <div className="flex items-center space-x-4">
                       <CheckCircle className="h-4 w-4 text-green-600" />

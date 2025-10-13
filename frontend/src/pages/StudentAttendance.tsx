@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,12 +39,33 @@ const mockSubjectStats = [
 ];
 
 export default function StudentAttendance() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
 
+  useEffect(() => {
+    const userData = localStorage.getItem("user");
+    if (!userData) {
+      navigate("/");
+      return;
+    }
+    setUser(JSON.parse(userData));
+  }, [navigate]);
+
+  // Fetch subjects for dropdown
+  const { data: subjectsData } = useApiQuery(
+    '/admin/subjects',
+    ['subjects'],
+    { enabled: !!user }
+  );
+
+  const subjects = subjectsData?.subjects || [];
+
   const handleLogout = () => {
-    console.log("Logging out...");
+    localStorage.removeItem("user");
+    navigate("/");
   };
 
   const filteredAttendance = mockAttendanceData.filter(record => {
@@ -196,11 +219,11 @@ export default function StudentAttendance() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Subjects</SelectItem>
-                  <SelectItem value="Mathematics">Mathematics</SelectItem>
-                  <SelectItem value="Physics">Physics</SelectItem>
-                  <SelectItem value="Chemistry">Chemistry</SelectItem>
-                  <SelectItem value="Biology">Biology</SelectItem>
-                  <SelectItem value="English">English</SelectItem>
+                  {subjects.map((subject: any) => (
+                    <SelectItem key={subject.id} value={subject.name}>
+                      {subject.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select value={selectedStatus} onValueChange={setSelectedStatus}>

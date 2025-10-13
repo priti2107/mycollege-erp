@@ -1,8 +1,11 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Calendar, BookOpen, Trophy, Clock, User, Bell } from "lucide-react";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 
 const mockStudent = {
@@ -41,20 +44,71 @@ const mockAnnouncements = [
 ];
 
 export default function StudentDashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const userData = localStorage.getItem("user");
+    if (!userData) {
+      navigate("/");
+      return;
+    }
+    setUser(JSON.parse(userData));
+  }, [navigate]);
+
+  // Fetch all student dashboard data from API
+  const { data: dashboardData, isLoading, error } = useApiQuery(
+    '/student/dashboard/stats',
+    ['student-dashboard-stats'],
+    { enabled: !!user }
+  );
+
   const handleLogout = () => {
-    // Add logout logic here
-    console.log("Logging out...");
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
+    navigate("/");
   };
 
+  if (!user) return null;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Error fetching data: {error.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Extract data from API response or use fallback values
+  const attendance = dashboardData?.attendance || mockAttendance;
+  const subjects = dashboardData?.subjects || mockSubjects;
+  const assignments = dashboardData?.assignments || mockAssignments;
+  const announcements = dashboardData?.announcements || mockAnnouncements;
+  const nextClass = dashboardData?.nextClass || { subject: "Physics", room: "Room 201", time: "10:30 AM" };
+  const overallGrade = dashboardData?.overallGrade || "A";
+  const averagePercentage = dashboardData?.averagePercentage || 89.4;
+
   return (
-    <DashboardLayout userRole="student" user={mockStudent} onLogout={handleLogout}>
+    <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Welcome back, {mockStudent.name}!</h1>
+            <h1 className="text-3xl font-bold text-foreground">Welcome back, {user.name}!</h1>
             <p className="text-muted-foreground mt-2">
-              {mockStudent.class} • Roll No: {mockStudent.rollNumber}
+              {dashboardData?.class || "Student"} • Roll No: {dashboardData?.rollNumber || user.studentId || "N/A"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -73,10 +127,10 @@ export default function StudentDashboard() {
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">{mockAttendance.percentage}%</div>
-              <Progress value={mockAttendance.percentage} className="mt-2" />
+              <div className="text-2xl font-bold text-primary">{attendance.percentage}%</div>
+              <Progress value={attendance.percentage} className="mt-2" />
               <p className="text-xs text-muted-foreground mt-2">
-                {mockAttendance.present}/{mockAttendance.total} days present
+                {attendance.present}/{attendance.total} days present
               </p>
             </CardContent>
           </Card>
@@ -87,8 +141,8 @@ export default function StudentDashboard() {
               <Trophy className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">A</div>
-              <p className="text-xs text-muted-foreground mt-2">89.4% Average</p>
+              <div className="text-2xl font-bold text-primary">{overallGrade}</div>
+              <p className="text-xs text-muted-foreground mt-2">{averagePercentage}% Average</p>
             </CardContent>
           </Card>
 
@@ -99,7 +153,7 @@ export default function StudentDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-orange-500">
-                {mockAssignments.filter(a => a.status === "pending").length}
+                {assignments.filter((a: any) => a.status === "pending").length}
               </div>
               <p className="text-xs text-muted-foreground mt-2">Due this week</p>
             </CardContent>
@@ -111,8 +165,8 @@ export default function StudentDashboard() {
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-lg font-bold">Physics</div>
-              <p className="text-xs text-muted-foreground mt-2">Room 201 • 10:30 AM</p>
+              <div className="text-lg font-bold">{nextClass.subject}</div>
+              <p className="text-xs text-muted-foreground mt-2">{nextClass.room} • {nextClass.time}</p>
             </CardContent>
           </Card>
         </div>
@@ -130,7 +184,7 @@ export default function StudentDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {mockSubjects.map((subject, index) => (
+                  {subjects.map((subject: any, index: number) => (
                     <div key={index} className="flex items-center justify-between p-4 rounded-lg border">
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-2">
@@ -161,7 +215,7 @@ export default function StudentDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {mockAssignments.map((assignment, index) => (
+                  {assignments.map((assignment: any, index: number) => (
                     <div key={index} className="p-3 rounded-lg border">
                       <div className="flex items-start justify-between mb-2">
                         <h4 className="font-medium text-sm">{assignment.title}</h4>
@@ -193,7 +247,7 @@ export default function StudentDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {mockAnnouncements.map((announcement, index) => (
+                  {announcements.map((announcement: any, index: number) => (
                     <div key={index} className="p-3 rounded-lg border">
                       <h4 className="font-medium text-sm">{announcement.title}</h4>
                       <p className="text-xs text-muted-foreground mt-1">{announcement.date}</p>

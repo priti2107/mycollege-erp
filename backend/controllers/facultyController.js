@@ -21,7 +21,6 @@ export const getFacultyClasses = asyncHandler(async (req, res) => {
         .select(`
             id,
             name,
-            period_time,
             subject:subjects(name),
             student_count:student_classes(count)
         `)
@@ -35,7 +34,6 @@ export const getFacultyClasses = asyncHandler(async (req, res) => {
     res.json(classes.map(c => ({
         id: c.id,
         name: c.name,
-        time: c.period_time,
         subjectName: c.subject.name,
         students: c.student_count[0]?.count || 0
     })));
@@ -219,18 +217,21 @@ export const getAttendanceForClass = asyncHandler(async (req, res) => {
     const { classId } = req.params;
     const { date } = req.query; 
     
-    // 1. Fetch existing attendance record header
-    const { data: record, error: recordError } = await supabase
+    console.log(`Fetching attendance for classId=${classId}, date=${date}`);
+    
+    // 1. Fetch existing attendance record header (use supabaseAdmin to bypass RLS)
+    const { data: record, error: recordError } = await supabaseAdmin
         .from('attendance_records')
         .select('id, is_submitted')
         .eq('class_id', classId)
         .eq('record_date', date)
-        .single();
+        .maybeSingle(); // Use maybeSingle() instead of single() to handle no record case
     
     let recordId = record?.id;
+    console.log(`Found record:`, record);
     
-    // 2. Fetch all students for the class (RLS check is implicit)
-    const { data: studentsData, error: studentsError } = await supabase
+    // 2. Fetch all students for the class
+    const { data: studentsData, error: studentsError } = await supabaseAdmin
         .from('student_classes')
         .select(`
             student_id,
@@ -246,12 +247,10 @@ export const getAttendanceForClass = asyncHandler(async (req, res) => {
         return res.status(500).json({ message: 'Failed to retrieve class list.' });
     }
     
-    // ... (existing code for fetching existingEntries)
-
+    // 3. Fetch existing attendance entries if record exists
     let existingEntries = {};
     if (recordId) {
-        // ... (existing entries fetching logic)
-        const { data: entries, error: entriesError } = await supabase
+        const { data: entries, error: entriesError } = await supabaseAdmin
             .from('attendance_entries')
             .select('student_id, status')
             .eq('record_id', recordId);
@@ -267,8 +266,46 @@ export const getAttendanceForClass = asyncHandler(async (req, res) => {
         }, {});
     }
 
-
-    // 3. APPLY FIX: Add defensive checks (sc.student and sc.student.user)
+    // 4. Fetch historical attendance stats for each student in this class
+    // Get all attendance records for this class
+    const { data: allRecords, error: allRecordsError } = await supabaseAdmin
+        .from('attendance_records')
+        .select('id')
+        .eq('class_id', classId);
+    
+    if (allRecordsError) {
+        console.error('Database fetch error (all attendance records):', allRecordsError);
+        return res.status(500).json({ message: 'Failed to retrieve attendance history.' });
+    }
+    
+    const recordIds = allRecords.map(r => r.id);
+    const totalClasses = recordIds.length;
+    
+    // Get all attendance entries for these records
+    let attendanceStats = {};
+    if (recordIds.length > 0) {
+        const { data: allEntries, error: allEntriesError } = await supabaseAdmin
+            .from('attendance_entries')
+            .select('student_id, status')
+            .in('record_id', recordIds);
+        
+        if (allEntriesError) {
+            console.error('Database fetch error (all attendance entries):', allEntriesError);
+        } else {
+            // Calculate attended classes per student
+            attendanceStats = allEntries.reduce((acc, entry) => {
+                if (!acc[entry.student_id]) {
+                    acc[entry.student_id] = 0;
+                }
+                if (entry.status === 'present') {
+                    acc[entry.student_id]++;
+                }
+                return acc;
+            }, {});
+        }
+    }
+    
+    // 5. Format student data with attendance status and historical stats
     const formattedData = studentsData.map(sc => {
         // Check for missing student_profiles record or users record
         if (!sc.student || !sc.student.user) {
@@ -277,18 +314,33 @@ export const getAttendanceForClass = asyncHandler(async (req, res) => {
                 id: sc.student_id,
                 name: "UNKNOWN USER (Missing Profile)",
                 rollNo: "N/A",
+                classes: totalClasses,
+                attended: 0,
+                percentage: 0,
                 present: false // Default to absent for safety
              };
         }
+        
+        const hasAttendanceRecord = existingEntries.hasOwnProperty(sc.student_id);
+        const attended = attendanceStats[sc.student_id] || 0;
+        const percentage = totalClasses > 0 ? (attended / totalClasses) * 100 : 0;
+        const present = hasAttendanceRecord ? existingEntries[sc.student_id] : false;
+        
+        console.log(`Student ${sc.student_id}: hasRecord=${hasAttendanceRecord}, present=${present}, existingEntries=`, existingEntries[sc.student_id]);
         
         return {
             id: sc.student_id,
             name: `${sc.student.user.first_name} ${sc.student.user.last_name}`,
             rollNo: sc.student.roll_number,
-            present: existingEntries[sc.student_id] === undefined ? true : existingEntries[sc.student_id] 
+            classes: totalClasses,
+            attended: attended,
+            percentage: percentage,
+            present: present // Today's attendance status
         };
     });
 
+    console.log('Returning attendance data:', JSON.stringify(formattedData, null, 2));
+    
     res.json({
         students: formattedData,
         isSubmitted: record?.is_submitted || false
@@ -300,11 +352,13 @@ export const saveAttendance = asyncHandler(async (req, res) => {
     const { classId, date, attendance } = req.body; // attendance is an array of { studentId, isPresent }
     const facultyId = req.user.id;
     
+    console.log('Saving attendance:', { classId, date, attendanceCount: attendance.length });
+    console.log('Attendance records:', JSON.stringify(attendance, null, 2));
+    
     // 1. Create or get attendance_records header
     const { data: record, error: upsertError } = await supabaseAdmin.from('attendance_records').upsert({
         class_id: classId,
         record_date: date,
-        faculty_id: facultyId,
         is_submitted: true // Mark as submitted immediately on save
     }, { onConflict: 'class_id, record_date' }).select('id').single();
 
@@ -314,6 +368,7 @@ export const saveAttendance = asyncHandler(async (req, res) => {
     }
     
     const recordId = record.id;
+    console.log('Created/fetched record ID:', recordId);
     
     // 2. Prepare attendance entries for batch upsert
     const entries = attendance.map(entry => ({
@@ -321,6 +376,8 @@ export const saveAttendance = asyncHandler(async (req, res) => {
         student_id: entry.studentId,
         status: entry.isPresent ? 'present' : 'absent'
     }));
+    
+    console.log('Entries to upsert:', JSON.stringify(entries, null, 2));
 
     // 3. Batch upsert attendance_entries
     const { error: batchError } = await supabaseAdmin.from('attendance_entries').upsert(entries, {
@@ -370,7 +427,7 @@ export const getExamsForClass = asyncHandler(async (req, res) => {
         id: e.id,
         name: e.name,
         maxMarks: e.max_marks,
-        type: e.exam_type
+        date: e.exam_date
     })));
 });
 

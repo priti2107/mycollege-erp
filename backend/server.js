@@ -12,6 +12,25 @@ dotenv.config();
 
 const app = express();
 
+const requestLogger = (req, res, next) => {
+    const start = process.hrtime();
+    
+    // Log the incoming request method and URL
+    console.log(`\n➡️  [${new Date().toISOString()}] Incoming Request: ${req.method} ${req.originalUrl}`);
+
+    res.on('finish', () => {
+        const diff = process.hrtime(start);
+        const responseTime = (diff[0] * 1e9 + diff[1]) / 1e6; // Convert to milliseconds
+        
+        // Log the response status and time
+        console.log(`✅  [${new Date().toISOString()}] Responded: ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | Time: ${responseTime.toFixed(2)}ms`);
+    });
+
+    next();
+};
+
+
+
 // --- Middleware for Minimum Response Time ---
 
 //? CORS: Allow requests from your React frontend domain
@@ -24,8 +43,11 @@ app.use(cors({
     origin: '*' // Development only: Allow all origins. Change in production.
 }));
 
+
+
 // 2. Body Parser: Process JSON data from incoming requests
 app.use(express.json()); 
+app.use(requestLogger); 
 
 // 3. Root Route
 app.get('/', (req, res) => {

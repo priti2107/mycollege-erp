@@ -95,7 +95,7 @@ export const getStudentResults = asyncHandler(async (req, res) => {
         .select(`
             marks_obtained,
             exam:exams (
-                id, name, max_marks, exam_type, exam_date,
+                id, name, max_marks, exam_date,
                 class:classes(subject:subjects(name))
             )
         `)
@@ -115,7 +115,6 @@ export const getStudentResults = asyncHandler(async (req, res) => {
             examsMap.set(exam.id, {
                 id: exam.id,
                 name: exam.name,
-                type: exam.exam_type,
                 date: exam.exam_date,
                 status: new Date(exam.exam_date) < new Date() ? 'completed' : 'upcoming',
                 subjects: [],
@@ -145,7 +144,10 @@ export const getStudentResults = asyncHandler(async (req, res) => {
     });
 
 
-    res.json(finalExams);
+    res.json({
+        exams: finalExams,
+        assignments: [] // For now, assignments are empty, could be expanded later
+    });
 });
 
 

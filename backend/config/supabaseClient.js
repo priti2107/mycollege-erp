@@ -12,12 +12,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Initialize the Supabase Client
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    fetch: (url, options) => {
-        return fetch(url, {
-            ...options,
-            signal: AbortSignal.timeout(5000) // 5 second timeout for low latency
-        });
+    auth: {
+        persistSession: false,
+        detectSessionInUrl: false
+    },
+    global: {
+        fetch: (url, options) => {
+            return fetch(url, {
+                ...options,
+                signal: AbortSignal.timeout(15000) // 15 second timeout
+            });
+        }
     }
 });
 
-console.log('Supabase Client Initialized and configured with 5s timeout.');
+console.log('Supabase Client Initialized with 15s timeout.');

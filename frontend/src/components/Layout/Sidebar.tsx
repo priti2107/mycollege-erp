@@ -10,7 +10,8 @@ import {
   Library, 
   Settings,
   ChevronLeft,
-  GraduationCap
+  GraduationCap,
+  UserPlus
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ const menuItems = {
     { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
     { icon: Users, label: "Students", path: "/students" },
     { icon: UserCheck, label: "Faculty", path: "/faculty" },
+    { icon: UserPlus, label: "Assign Classes", path: "/class-assignment" },
     { icon: ClipboardList, label: "Attendance", path: "/attendance" },
     { icon: BookOpen, label: "Results", path: "/results" },
     { icon: CreditCard, label: "Fees", path: "/fees" },

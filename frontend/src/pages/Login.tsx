@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
+import { buildApiUrl, apiConfig } from "@/config/api";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -20,33 +21,38 @@ export default function Login() {
     setIsLoading(true);
     setError("");
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Mock authentication logic
-    const users = {
-      "admin@college.edu": { role: "admin", name: "Dr. Sarah Johnson" },
-      "faculty@college.edu": { role: "faculty", name: "Prof. Michael Chen" },
-      "student@college.edu": { role: "student", name: "Alex Rodriguez" }
-    };
-
-    const user = users[email as keyof typeof users];
-    
-    if (user && password === "password123") {
-      localStorage.setItem("user", JSON.stringify({
-        ...user,
-        email,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.name}`
-      }));
-      
-      toast({
-        title: "Login Successful",
-        description: `Welcome back, ${user.name}!`,
+    try {
+      const response = await fetch(buildApiUrl(apiConfig.endpoints.auth.login), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
       });
-      
-      navigate("/dashboard");
-    } else {
-      setError("Invalid email or password");
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Save JWT token to localStorage
+        localStorage.setItem("token", data.token);
+        
+        // Save user data to localStorage
+        localStorage.setItem("user", JSON.stringify({
+          ...data.user,
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.user.name}`
+        }));
+        
+        toast({
+          title: "Login Successful",
+          description: `Welcome back, ${data.user.name}!`,
+        });
+        
+        navigate("/dashboard");
+      } else {
+        setError(data.message || "Invalid email or password");
+      }
+    } catch (err) {
+      setError("Network error. Please try again.");
     }
     
     setIsLoading(false);

@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Calendar, Users, Clock, CheckCircle, XCircle, Download } from "lucide-react";
+import { useApiQuery, useApiMutation } from "@/hooks/useApiQuery";
+import { useToast } from "@/hooks/use-toast";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,44 +25,14 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 
-// Mock attendance data
-const mockAttendanceData = [
-  {
-    id: "ST001",
-    name: "Alice Johnson",
-    rollNo: "2023001",
-    present: true,
-    classes: 45,
-    attended: 42,
-    percentage: 93.3
-  },
-  {
-    id: "ST002",
-    name: "Bob Smith",
-    rollNo: "2023002",
-    present: false,
-    classes: 45,
-    attended: 38,
-    percentage: 84.4
-  },
-  {
-    id: "ST003",
-    name: "Carol Davis",
-    rollNo: "2023003",
-    present: true,
-    classes: 45,
-    attended: 44,
-    percentage: 97.8
-  },
-];
-
 export default function Attendance() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
+  const [selectedCourse, setSelectedCourse] = useState("");
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("");
-  const [attendanceData, setAttendanceData] = useState(mockAttendanceData);
-  const [currentDate] = useState(new Date().toLocaleDateString());
+  const [displayDate] = useState(new Date().toLocaleDateString());
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -71,13 +43,87 @@ export default function Attendance() {
     setUser(JSON.parse(userData));
   }, [navigate]);
 
+  // Fetch attendance data based on selected class
+  const currentDate = new Date().toISOString().split('T')[0];
+  const attendanceEndpoint = selectedClass && user?.role === 'faculty'
+    ? `/faculty/attendance/class/${selectedClass}?date=${currentDate}`
+    : selectedClass && user?.role === 'admin'
+    ? `/admin/attendance?classId=${selectedClass}&date=${currentDate}`
+    : null;
+    
+  const { data: attendanceResponse, isLoading, error, refetch } = useApiQuery(
+    attendanceEndpoint,
+    ['attendance', selectedClass, currentDate, user?.role], // Include date in query key
+    { enabled: !!user && !!selectedClass }
+  );
+
+  // Save attendance mutation for faculty/admin
+  const saveAttendanceMutation = useApiMutation('/faculty/attendance/save', 'POST');
+
+  const attendanceData = attendanceResponse?.students || attendanceResponse || [];
+
+  // Fetch classes and subjects for dropdowns
+  const { data: classesData } = useApiQuery(
+    user?.role === 'faculty' ? '/faculty/classes' : '/admin/classes',
+    ['classes'],
+    { enabled: !!user }
+  );
+
+  const { data: coursesData } = useApiQuery(
+    '/admin/courses',
+    ['courses'],
+    { enabled: !!user }
+  );
+
+  const { data: subjectsData } = useApiQuery(
+    '/admin/subjects',
+    ['subjects'],
+    { enabled: !!user }
+  );
+
+  // Extract data with proper null checks
+  const allClasses = user?.role === 'faculty' 
+    ? (Array.isArray(classesData) ? classesData : [])
+    : (classesData?.classes || []);
+  const courses = Array.isArray(coursesData) ? coursesData : (coursesData?.courses || []);
+  const subjects = Array.isArray(subjectsData) ? subjectsData : (subjectsData?.subjects || []);
+
+  // Filter classes by selected course (via subject's course_id)
+  const filteredClasses = selectedCourse 
+    ? allClasses.filter((cls: any) => {
+        const classSubject = subjects.find((s: any) => s.id === cls.subject_id);
+        return classSubject?.course_id === selectedCourse;
+      })
+    : allClasses;
+
+  // When class is selected, auto-set the subject
+  useEffect(() => {
+    if (selectedClass) {
+      const selectedClassObj = allClasses.find((cls: any) => cls.id === selectedClass);
+      if (selectedClassObj) {
+        setSelectedSubject(selectedClassObj.subject_id || selectedClassObj.subjectName || "");
+      }
+    }
+  }, [selectedClass, allClasses]);
+
   const handleLogout = () => {
     localStorage.removeItem("user");
     navigate("/");
   };
 
+  const [localAttendanceData, setLocalAttendanceData] = useState<any[]>([]);
+
+  // Update local data when API data changes
+  useEffect(() => {
+    if (attendanceData && attendanceData.length > 0) {
+      console.log('📥 Attendance data from API:', attendanceData);
+      setLocalAttendanceData(attendanceData);
+    }
+  }, [attendanceData]);
+
   const handleAttendanceToggle = (studentId: string, isPresent: boolean) => {
-    setAttendanceData(prev =>
+    console.log(`✏️ Toggling attendance for student ${studentId} to ${isPresent}`);
+    setLocalAttendanceData(prev =>
       prev.map(student =>
         student.id === studentId
           ? { ...student, present: isPresent }
@@ -86,17 +132,69 @@ export default function Attendance() {
     );
   };
 
-  const handleSubmitAttendance = () => {
-    // Handle attendance submission logic
-    console.log("Attendance submitted:", attendanceData);
+  const handleSubmitAttendance = async () => {
+    if (!selectedClass) {
+      toast({
+        title: "Please select a class",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const attendanceRecords = localAttendanceData.map(student => ({
+        studentId: student.id,
+        isPresent: student.present !== undefined ? student.present : false
+      }));
+
+      await saveAttendanceMutation.mutateAsync({
+        classId: selectedClass,
+        date: currentDate,
+        attendance: attendanceRecords
+      });
+
+      toast({
+        title: "Attendance saved successfully",
+      });
+      
+      // Refetch to update the attended count and percentage in the table
+      // The checkboxes won't reset because the backend now returns the saved 'present' status
+      refetch();
+    } catch (error: any) {
+      toast({
+        title: "Failed to save attendance",
+        description: error?.message || "Something went wrong",
+        variant: "destructive",
+      });
+    }
   };
 
-  const totalStudents = attendanceData.length;
-  const presentStudents = attendanceData.filter(s => s.present).length;
+  const totalStudents = localAttendanceData.length;
+  const presentStudents = localAttendanceData.filter(s => s.present).length;
   const absentStudents = totalStudents - presentStudents;
-  const attendancePercentage = ((presentStudents / totalStudents) * 100).toFixed(1);
+  const attendancePercentage = totalStudents > 0 ? ((presentStudents / totalStudents) * 100).toFixed(1) : "0";
 
   if (!user) return null;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading attendance data...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Error fetching attendance data: {error.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
@@ -183,30 +281,55 @@ export default function Attendance() {
             <CardContent className="p-6">
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
-                  <label className="text-sm font-medium mb-2 block">Class</label>
-                  <Select value={selectedClass} onValueChange={setSelectedClass}>
+                  <label className="text-sm font-medium mb-2 block">Course</label>
+                  <Select value={selectedCourse} onValueChange={(value) => {
+                    setSelectedCourse(value);
+                    setSelectedClass(""); // Reset class when course changes
+                    setSelectedSubject(""); // Reset subject when course changes
+                  }}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select class" />
+                      <SelectValue placeholder="Select course" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cs-1">Computer Science - 1st Year</SelectItem>
-                      <SelectItem value="cs-2">Computer Science - 2nd Year</SelectItem>
-                      <SelectItem value="math-1">Mathematics - 1st Year</SelectItem>
-                      <SelectItem value="physics-1">Physics - 1st Year</SelectItem>
+                      {courses.map((course: any) => (
+                        <SelectItem key={course.id} value={course.id}>
+                          {course.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex-1">
+                  <label className="text-sm font-medium mb-2 block">Class</label>
+                  <Select 
+                    value={selectedClass} 
+                    onValueChange={setSelectedClass}
+                    disabled={!selectedCourse}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={selectedCourse ? "Select class" : "Select course first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredClasses.map((cls: any) => (
+                        <SelectItem key={cls.id} value={cls.id}>
+                          {cls.name} - {cls.subjectName}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="flex-1">
                   <label className="text-sm font-medium mb-2 block">Subject</label>
-                  <Select value={selectedSubject} onValueChange={setSelectedSubject}>
+                  <Select value={selectedSubject} disabled>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select subject" />
+                      <SelectValue placeholder="Auto-selected with class" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="ds">Data Structures</SelectItem>
-                      <SelectItem value="algo">Algorithms</SelectItem>
-                      <SelectItem value="calculus">Calculus</SelectItem>
-                      <SelectItem value="physics">Physics</SelectItem>
+                      {subjects.map((subject: any) => (
+                        <SelectItem key={subject.id} value={subject.id}>
+                          {subject.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -214,7 +337,7 @@ export default function Attendance() {
                   <label className="text-sm font-medium mb-2 block">Date</label>
                   <div className="flex items-center gap-2 p-2 border rounded-lg bg-muted/30">
                     <Clock className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm">{currentDate}</span>
+                    <span className="text-sm">{displayDate}</span>
                   </div>
                 </div>
               </div>
@@ -226,7 +349,7 @@ export default function Attendance() {
         <Card className="erp-card">
           <CardHeader>
             <CardTitle>
-              {user.role === 'student' ? 'My Attendance' : `Attendance - ${currentDate}`}
+              {user.role === 'student' ? 'My Attendance' : `Attendance - ${displayDate}`}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -244,7 +367,7 @@ export default function Attendance() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {attendanceData.map((student) => (
+                {localAttendanceData.map((student) => (
                   <TableRow key={student.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
