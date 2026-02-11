@@ -15,6 +15,12 @@ const authenticatedFetch = async (endpoint: string, options: RequestInit = {}) =
   const url = buildApiUrl(endpoint);
   const headers = getAuthHeaders();
   
+  console.log(`🚀 API Request: ${endpoint}`, {
+    url,
+    hasToken: !!localStorage.getItem('token'),
+    headers: { ...headers, Authorization: headers.Authorization ? '***' : 'none' }
+  });
+  
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -23,22 +29,43 @@ const authenticatedFetch = async (endpoint: string, options: RequestInit = {}) =
     },
   });
 
+  console.log(`📡 API Response: ${endpoint}`, {
+    status: response.status,
+    statusText: response.statusText,
+    ok: response.ok
+  });
+
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ message: 'Request failed' }));
+    console.error(`❌ API Error: ${endpoint}`, errorData);
     throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log(`✅ API Success: ${endpoint}`, {
+    dataType: typeof data,
+    dataKeys: typeof data === 'object' ? Object.keys(data) : 'not_object',
+    dataSize: JSON.stringify(data).length
+  });
+  return data;
 };
 
 // Custom hook for GET requests
 export const useApiQuery = (endpoint: string, queryKey: string[], options = {}) => {
   return useQuery({
     queryKey,
-    queryFn: () => authenticatedFetch(endpoint),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    queryFn: async () => {
+      console.log(`[useApiQuery] Fetching endpoint: ${endpoint}`);
+      console.log(`[useApiQuery] Query key:`, queryKey);
+      const result = await authenticatedFetch(endpoint);
+      console.log(`[useApiQuery] Response from ${endpoint}:`, result);
+      return result;
+    },
+    staleTime: 30 * 1000, // 30 seconds default (can be overridden)
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
     retry: 1,
+    refetchOnMount: true, // Always refetch when component mounts
+    refetchOnWindowFocus: false, // Don't refetch on window focus
     ...options,
   });
 };
@@ -48,10 +75,16 @@ export const useApiMutation = (endpoint: string, method: 'POST' | 'PUT' | 'DELET
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: (data?: any) => authenticatedFetch(endpoint, {
-      method,
-      body: data ? JSON.stringify(data) : undefined,
-    }),
+    mutationFn: (params?: any) => {
+      // Support both simple data and {url, data} format
+      const actualEndpoint = params?.url || endpoint;
+      const actualData = params?.data || params;
+      
+      return authenticatedFetch(actualEndpoint, {
+        method,
+        body: actualData ? JSON.stringify(actualData) : undefined,
+      });
+    },
     onSuccess: () => {
       // Invalidate and refetch related queries
       queryClient.invalidateQueries();

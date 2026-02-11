@@ -31,7 +31,7 @@ export const protect = asyncHandler(async (req, res, next) => {
         // Fetch User Role from the Database
         const { data: profileData, error: profileError } = await supabase
             .from('users') // Your custom 'users' table (linked to auth.users)
-            .select('role:roles(name)')
+            .select('role_id, role:roles(name)')
             .eq('id', user.id)
             .single();
 
@@ -44,6 +44,7 @@ export const protect = asyncHandler(async (req, res, next) => {
         req.user = {
             id: user.id,
             role: profileData.role.name,
+            role_id: profileData.role_id,
             email: user.email,
         };
 
@@ -58,6 +59,15 @@ export const protect = asyncHandler(async (req, res, next) => {
 // @desc    Admin access only
 export const admin = (req, res, next) => {
     // Check the role attached by the 'protect' middleware
+    if (req.user && req.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ message: 'Forbidden: Admin access required.' });
+    }
+};
+
+// @desc    Admin access only (alias)
+export const adminOnly = (req, res, next) => {
     if (req.user && req.user.role === 'admin') {
         next();
     } else {

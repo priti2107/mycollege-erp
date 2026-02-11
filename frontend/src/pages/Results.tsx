@@ -222,16 +222,16 @@ export default function Results() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            {/* <Button variant="outline">
               <Download className="w-4 h-4 mr-2" />
               Export Results
-            </Button>
-            {user.role === 'admin' && (
+            </Button> */}
+            {/* {user.role === 'admin' && (
               <Button className="erp-gradient-bg">
                 <TrendingUp className="w-4 h-4 mr-2" />
                 Generate Report
               </Button>
-            )}
+            )} */}
           </div>
         </div>
 

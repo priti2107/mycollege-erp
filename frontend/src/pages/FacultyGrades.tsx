@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { GraduationCap, Save, Calculator, BookOpen, Users, Trophy } from "lucide-react";
+import { useApiQuery, useApiMutation } from "@/hooks/useApiQuery";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,45 +25,12 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 
-// Mock data
-const mockClasses = [
-  { id: "CS101", name: "Data Structures", students: 45 },
-  { id: "CS201", name: "Algorithms", students: 38 },
-  { id: "CS301", name: "Machine Learning", students: 32 }
-];
-
-const mockExams = [
-  { id: "MID1", name: "Mid Term 1", maxMarks: 50, type: "Theory" },
-  { id: "MID2", name: "Mid Term 2", maxMarks: 50, type: "Theory" },
-  { id: "FINAL", name: "Final Exam", maxMarks: 100, type: "Theory" },
-  { id: "LAB1", name: "Lab Assignment 1", maxMarks: 25, type: "Practical" },
-  { id: "LAB2", name: "Lab Assignment 2", maxMarks: 25, type: "Practical" }
-];
-
-const mockStudents = [
-  { id: "STU001", name: "John Smith", rollNo: "CS2021001", course: "Computer Science" },
-  { id: "STU002", name: "Emma Johnson", rollNo: "CS2021002", course: "Computer Science" },
-  { id: "STU003", name: "Michael Brown", rollNo: "CS2021003", course: "Computer Science" },
-  { id: "STU004", name: "Sarah Davis", rollNo: "CS2021004", course: "Computer Science" },
-  { id: "STU005", name: "David Wilson", rollNo: "CS2021005", course: "Computer Science" }
-];
-
-// Mock grades data
-const mockGrades: Record<string, Record<string, number>> = {
-  "STU001": { "MID1": 42, "MID2": 45, "FINAL": 85, "LAB1": 22, "LAB2": 24 },
-  "STU002": { "MID1": 38, "MID2": 41, "FINAL": 78, "LAB1": 20, "LAB2": 23 },
-  "STU003": { "MID1": 45, "MID2": 47, "FINAL": 92, "LAB1": 25, "LAB2": 25 },
-  "STU004": { "MID1": 40, "MID2": 43, "FINAL": 80, "LAB1": 23, "LAB2": 24 },
-  "STU005": { "MID1": 35, "MID2": 38, "FINAL": 72, "LAB1": 19, "LAB2": 21 }
-};
-
 export default function FacultyGrades() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedExam, setSelectedExam] = useState("");
-  const [grades, setGrades] = useState<Record<string, Record<string, number>>>(mockGrades);
   const [tempGrades, setTempGrades] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -79,6 +47,34 @@ export default function FacultyGrades() {
     setUser(parsedUser);
   }, [navigate]);
 
+  // Fetch faculty classes
+  const { data: classesData, isLoading: classesLoading } = useApiQuery(
+    '/faculty/classes',
+    ['faculty-classes'],
+    { enabled: !!user }
+  );
+
+  // Fetch exams for selected class
+  const { data: examsData, isLoading: examsLoading } = useApiQuery(
+    `/faculty/grades/exams/${selectedClass}`,
+    ['faculty-exams', selectedClass],
+    { enabled: !!user && !!selectedClass }
+  );
+
+  // Fetch students with grades for selected class
+  const { data: studentsData, isLoading: studentsLoading, refetch: refetchStudents } = useApiQuery(
+    `/faculty/grades/students/${selectedClass}`,
+    ['faculty-students-grades', selectedClass],
+    { enabled: !!user && !!selectedClass }
+  );
+
+  // Save grades mutation
+  const saveGradesMutation = useApiMutation('/faculty/grades/save', 'POST');
+
+  const classes = classesData || [];
+  const exams = examsData || [];
+  const students = studentsData || [];
+
   const handleLogout = () => {
     localStorage.removeItem("user");
     navigate("/");
@@ -91,7 +87,7 @@ export default function FacultyGrades() {
     }));
   };
 
-  const handleSaveGrades = () => {
+  const handleSaveGrades = async () => {
     if (!selectedClass || !selectedExam) {
       toast({
         title: "Please select class and exam",
@@ -100,14 +96,15 @@ export default function FacultyGrades() {
       return;
     }
 
-    const examInfo = mockExams.find(e => e.id === selectedExam);
+    const examInfo = exams.find((e: any) => e.id === selectedExam);
     const maxMarks = examInfo?.maxMarks || 100;
-    const updatedGrades = { ...grades };
 
-    // Validate and save grades
+    // Validate grades
+    const gradesObject: Record<string, number> = {};
     let hasError = false;
+    
     for (const [studentId, gradeStr] of Object.entries(tempGrades)) {
-      const grade = parseInt(gradeStr);
+      const grade = parseFloat(gradeStr);
       if (isNaN(grade) || grade < 0 || grade > maxMarks) {
         toast({
           title: `Invalid grade for student ${studentId}`,
@@ -117,31 +114,41 @@ export default function FacultyGrades() {
         hasError = true;
         break;
       }
-      
-      if (!updatedGrades[studentId]) {
-        updatedGrades[studentId] = {};
-      }
-      updatedGrades[studentId][selectedExam] = grade;
+      gradesObject[studentId] = grade;
     }
 
     if (!hasError) {
-      setGrades(updatedGrades);
-      setTempGrades({});
-      toast({
-        title: "Grades saved successfully!",
-        description: `Grades for ${examInfo?.name} have been updated`,
-      });
+      try {
+        await saveGradesMutation.mutateAsync({
+          examId: selectedExam,
+          grades: gradesObject
+        });
+
+        setTempGrades({});
+        refetchStudents();
+        
+        toast({
+          title: "Grades saved successfully!",
+          description: `Grades for ${examInfo?.name || 'exam'} have been updated`,
+        });
+      } catch (error: any) {
+        toast({
+          title: "Failed to save grades",
+          description: error.message || "Please try again",
+          variant: "destructive",
+        });
+      }
     }
   };
 
-  const calculateTotalMarks = (studentId: string) => {
-    const studentGrades = grades[studentId] || {};
-    return Object.values(studentGrades).reduce((sum, grade) => sum + grade, 0);
+  const calculateTotalMarks = (student: any) => {
+    if (!student.grades) return 0;
+    return Object.values(student.grades).reduce((sum: number, grade: any) => sum + (parseFloat(grade) || 0), 0);
   };
 
-  const calculatePercentage = (studentId: string) => {
-    const totalMarks = calculateTotalMarks(studentId);
-    const maxPossible = mockExams.reduce((sum, exam) => sum + exam.maxMarks, 0);
+  const calculatePercentage = (student: any) => {
+    const totalMarks = Number(calculateTotalMarks(student));
+    const maxPossible = exams.reduce((sum: number, exam: any) => sum + (exam.maxMarks || 0), 0);
     return maxPossible > 0 ? Math.round((totalMarks / maxPossible) * 100) : 0;
   };
 
@@ -164,8 +171,8 @@ export default function FacultyGrades() {
 
   if (!user) return null;
 
-  const selectedExamInfo = mockExams.find(e => e.id === selectedExam);
-  const classInfo = mockClasses.find(c => c.id === selectedClass);
+  const selectedExamInfo = exams.find((e: any) => e.id === selectedExam);
+  const classInfo = classes.find((c: any) => c.id === selectedClass);
 
   return (
     <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
@@ -195,9 +202,9 @@ export default function FacultyGrades() {
                     <SelectValue placeholder="Select a class" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockClasses.map((cls) => (
+                    {classes.map((cls: any) => (
                       <SelectItem key={cls.id} value={cls.id}>
-                        {cls.name} ({cls.students} students)
+                        {cls.name} {cls.subjectName ? `- ${cls.subjectName}` : ''} ({cls.students} students)
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -205,14 +212,14 @@ export default function FacultyGrades() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Exam/Assignment</label>
-                <Select value={selectedExam} onValueChange={setSelectedExam}>
+                <Select value={selectedExam} onValueChange={setSelectedExam} disabled={!selectedClass}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select exam" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockExams.map((exam) => (
+                    {exams.map((exam: any) => (
                       <SelectItem key={exam.id} value={exam.id}>
-                        {exam.name} (Max: {exam.maxMarks}) - {exam.type}
+                        {exam.name} (Max: {exam.maxMarks})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -262,10 +269,10 @@ export default function FacultyGrades() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {mockStudents.map((student) => {
-                      const currentGrade = grades[student.id]?.[selectedExam] || 0;
-                      const totalMarks = calculateTotalMarks(student.id);
-                      const percentage = calculatePercentage(student.id);
+                    {students.map((student: any) => {
+                      const currentGrade = student.grades?.[selectedExam] || 0;
+                      const totalMarks = calculateTotalMarks(student);
+                      const percentage = calculatePercentage(student);
                       const letterGrade = getLetterGrade(percentage);
 
                       return (
@@ -301,8 +308,8 @@ export default function FacultyGrades() {
                             />
                           </TableCell>
                           <TableCell>
-                            <span className="font-medium">{totalMarks}</span>
-                            <span className="text-muted-foreground">/{mockExams.reduce((sum, e) => sum + e.maxMarks, 0)}</span>
+                            <span className="font-medium">{Number(totalMarks).toFixed(2)}</span>
+                            <span className="text-muted-foreground">/{exams.reduce((sum: number, e: any) => sum + (e.maxMarks || 0), 0)}</span>
                           </TableCell>
                           <TableCell>
                             <span className={`font-medium ${getGradeColor(percentage)}`}>
@@ -336,7 +343,7 @@ export default function FacultyGrades() {
                     <Users className="w-6 h-6 text-primary" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold">{mockStudents.length}</p>
+                    <p className="text-2xl font-bold">{students.length}</p>
                     <p className="text-sm text-muted-foreground">Total Students</p>
                   </div>
                 </div>
@@ -350,7 +357,7 @@ export default function FacultyGrades() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">
-                      {Math.round(mockStudents.reduce((sum, s) => sum + calculatePercentage(s.id), 0) / mockStudents.length)}%
+                      {students.length > 0 ? Math.round(students.reduce((sum, s) => sum + calculatePercentage(s), 0) / students.length) : 0}%
                     </p>
                     <p className="text-sm text-muted-foreground">Class Average</p>
                   </div>
@@ -365,7 +372,7 @@ export default function FacultyGrades() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">
-                      {Math.max(...mockStudents.map(s => calculatePercentage(s.id)))}%
+                      {students.length > 0 ? Math.max(...students.map(s => calculatePercentage(s))) : 0}%
                     </p>
                     <p className="text-sm text-muted-foreground">Highest Score</p>
                   </div>
@@ -380,7 +387,7 @@ export default function FacultyGrades() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">
-                      {mockStudents.filter(s => calculatePercentage(s.id) >= 60).length}
+                      {students.filter(s => calculatePercentage(s) >= 60).length}
                     </p>
                     <p className="text-sm text-muted-foreground">Passing Students</p>
                   </div>

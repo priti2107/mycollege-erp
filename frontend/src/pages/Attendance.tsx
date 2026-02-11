@@ -206,10 +206,10 @@ export default function Attendance() {
             <p className="text-muted-foreground">Manage student attendance and track records</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            {/* <Button variant="outline">
               <Download className="w-4 h-4 mr-2" />
               Export Report
-            </Button>
+            </Button> */}
             {(user.role === 'admin' || user.role === 'faculty') && (
               <Button className="erp-gradient-bg" onClick={handleSubmitAttendance}>
                 <CheckCircle className="w-4 h-4 mr-2" />

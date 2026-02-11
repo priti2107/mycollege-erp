@@ -235,10 +235,10 @@ export default function Fees() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            {/* <Button variant="outline">
               <Download className="w-4 h-4 mr-2" />
               Export Report
-            </Button>
+            </Button> */}
             {user.role === 'admin' && (
               <>
                 <Dialog open={isAddDueDialogOpen} onOpenChange={setIsAddDueDialogOpen}>

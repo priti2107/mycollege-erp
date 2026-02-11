@@ -43,36 +43,60 @@ export const getFacultyClasses = asyncHandler(async (req, res) => {
 // @route   GET /api/faculty/grades/students/:classId
 export const getStudentsForClass = asyncHandler(async (req, res) => {
     const { classId } = req.params;
+    const { examId } = req.query;
     
     // Fetch all student profiles who are linked to this class
-    const { data: students, error } = await supabase
+    const { data: students, error } = await supabaseAdmin
         .from('student_classes')
         .select(`
-            student:student_profiles (
-                user:users(id, first_name, last_name, email),
-                roll_number
-            ),
-            grades:grades(marks_obtained, exam_id)
+            student_id,
+            student:student_profiles!student_id (
+                user_id,
+                roll_number,
+                user:users!user_id(first_name, last_name, email)
+            )
         `)
-        .eq('class_id', classId)
-        // RLS will ensure the querying faculty member can only see this data 
-        // if they are linked to classId.
+        .eq('class_id', classId);
 
     if (error) {
         console.error('Database fetch error (students for class):', error);
         return res.status(500).json({ message: 'Failed to retrieve students for class.' });
     }
 
+    // Get all student IDs
+    const studentIds = students.map(s => s.student_id);
+
+    // Fetch grades for these students (optionally filtered by examId)
+    let gradesQuery = supabaseAdmin
+        .from('grades')
+        .select('student_id, marks_obtained, exam_id')
+        .in('student_id', studentIds);
+
+    if (examId) {
+        gradesQuery = gradesQuery.eq('exam_id', examId);
+    }
+
+    const { data: grades } = await gradesQuery;
+
+    // Create a map of student_id -> {examId: marks}
+    const gradesMap = {};
+    if (grades) {
+        grades.forEach(grade => {
+            if (!gradesMap[grade.student_id]) {
+                gradesMap[grade.student_id] = {};
+            }
+            gradesMap[grade.student_id][grade.exam_id] = grade.marks_obtained;
+        });
+    }
+
     // Map data to match the structure needed for grade entry
     const formattedStudents = students.map(sc => ({
-        id: sc.student.user.id,
+        id: sc.student_id,
         name: `${sc.student.user.first_name} ${sc.student.user.last_name}`,
         rollNo: sc.student.roll_number,
+        email: sc.student.user.email,
         // Grades formatted as {examId: marks}
-        grades: sc.grades.reduce((acc, grade) => {
-            acc[grade.exam_id] = grade.marks_obtained;
-            return acc;
-        }, {})
+        grades: gradesMap[sc.student_id] || {}
     }));
 
     res.json(formattedStudents);
@@ -413,7 +437,10 @@ export const getExamsForClass = asyncHandler(async (req, res) => {
     
     const { data: exams, error } = await supabase
         .from('exams')
-        .select('*')
+        .select(`
+            *,
+            exam_type:exam_types(id, name, default_weightage)
+        `)
         .eq('class_id', classId)
         .order('exam_date');
         
@@ -422,12 +449,13 @@ export const getExamsForClass = asyncHandler(async (req, res) => {
         return res.status(500).json({ message: 'Failed to retrieve exams for class.' });
     }
     
-    // Map to a simpler structure needed for the dropdown (src/pages/FacultyGrades.tsx mockExams)
+    // Map to structure with exam type information
     res.json(exams.map(e => ({
         id: e.id,
         name: e.name,
         maxMarks: e.max_marks,
-        date: e.exam_date
+        date: e.exam_date,
+        examType: e.exam_type
     })));
 });
 
@@ -463,4 +491,357 @@ export const saveStudentGrades = asyncHandler(async (req, res) => {
     });
 
     res.status(200).json({ message: 'Grades saved successfully!' });
+});
+
+// ====================================================================
+// EXAM TYPES MANAGEMENT
+// ====================================================================
+
+// @desc    Get all exam types
+// @route   GET /api/faculty/exam-types
+// @access  Private (Faculty & Admin)
+export const getExamTypes = asyncHandler(async (req, res) => {
+    const { data: examTypes, error } = await supabase
+        .from('exam_types')
+        .select('*')
+        .order('name');
+
+    if (error) {
+        console.error('Database fetch error (exam types):', error);
+        return res.status(500).json({ message: 'Failed to retrieve exam types' });
+    }
+
+    res.json(examTypes || []);
+});
+
+// @desc    Create exam type (Admin only)
+// @route   POST /api/faculty/exam-types
+// @access  Private (Admin only)
+export const createExamType = asyncHandler(async (req, res) => {
+    const { name, description, default_weightage } = req.body;
+    const userId = req.user.id;
+
+    if (!name) {
+        return res.status(400).json({ message: 'Exam type name is required' });
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('exam_types')
+        .insert({ name, description, default_weightage: default_weightage || 10 })
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Database insert error (exam type):', error);
+        return res.status(500).json({ message: 'Failed to create exam type' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: userId,
+        action_type: 'CREATE_EXAM_TYPE',
+        table_affected: 'exam_types',
+        record_id_affected: data.id
+    });
+
+    res.status(201).json({
+        message: 'Exam type created successfully',
+        examType: data
+    });
+});
+
+// ====================================================================
+// EXAM MANAGEMENT (Create, Edit, Delete)
+// ====================================================================
+
+// @desc    Create new exam
+// @route   POST /api/faculty/exams
+// @access  Private (Faculty & Admin)
+export const createExam = asyncHandler(async (req, res) => {
+    const { name, class_id, exam_type_id, max_marks, exam_date } = req.body;
+    const userId = req.user.id;
+
+    if (!name || !class_id || !exam_type_id || !max_marks || !exam_date) {
+        return res.status(400).json({ 
+            message: 'All fields are required: name, class_id, exam_type_id, max_marks, exam_date' 
+        });
+    }
+
+    // Verify faculty owns this class (if not admin)
+    if (req.user.role_id === 2) {
+        const { data: classData } = await supabase
+            .from('classes')
+            .select('faculty_id')
+            .eq('id', class_id)
+            .single();
+
+        if (!classData || classData.faculty_id !== userId) {
+            return res.status(403).json({ message: 'You can only create exams for your own classes' });
+        }
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('exams')
+        .insert({
+            name,
+            class_id,
+            exam_type_id,
+            max_marks,
+            exam_date,
+            created_by: userId
+        })
+        .select(`
+            *,
+            exam_type:exam_types(name, default_weightage),
+            class:classes(name)
+        `)
+        .single();
+
+    if (error) {
+        console.error('Database insert error (exam):', error);
+        return res.status(500).json({ message: 'Failed to create exam' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: userId,
+        action_type: 'CREATE_EXAM',
+        table_affected: 'exams',
+        record_id_affected: data.id,
+        details: { exam_name: name, class_id }
+    });
+
+    res.status(201).json({
+        message: 'Exam created successfully',
+        exam: data
+    });
+});
+
+// @desc    Update exam
+// @route   PUT /api/faculty/exams/:examId
+// @access  Private (Faculty & Admin)
+export const updateExam = asyncHandler(async (req, res) => {
+    const { examId } = req.params;
+    const { name, exam_type_id, max_marks, exam_date } = req.body;
+    const userId = req.user.id;
+
+    const { data: existingExam } = await supabaseAdmin
+        .from('exams')
+        .select('*, class:classes(faculty_id)')
+        .eq('id', examId)
+        .single();
+
+    if (!existingExam) {
+        return res.status(404).json({ message: 'Exam not found' });
+    }
+
+    if (req.user.role_id === 2 && existingExam.class.faculty_id !== userId) {
+        return res.status(403).json({ message: 'You can only edit exams for your own classes' });
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('exams')
+        .update({
+            name,
+            exam_type_id,
+            max_marks,
+            exam_date,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', examId)
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Database update error (exam):', error);
+        return res.status(500).json({ message: 'Failed to update exam' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: userId,
+        action_type: 'UPDATE_EXAM',
+        table_affected: 'exams',
+        record_id_affected: examId
+    });
+
+    res.json({
+        message: 'Exam updated successfully',
+        exam: data
+    });
+});
+
+// @desc    Delete exam
+// @route   DELETE /api/faculty/exams/:examId
+// @access  Private (Faculty & Admin)
+export const deleteExam = asyncHandler(async (req, res) => {
+    const { examId } = req.params;
+    const userId = req.user.id;
+
+    const { data: existingExam } = await supabaseAdmin
+        .from('exams')
+        .select('name, class:classes(faculty_id)')
+        .eq('id', examId)
+        .single();
+
+    if (!existingExam) {
+        return res.status(404).json({ message: 'Exam not found' });
+    }
+
+    if (req.user.role_id === 2 && existingExam.class.faculty_id !== userId) {
+        return res.status(403).json({ message: 'You can only delete exams for your own classes' });
+    }
+
+    const { error } = await supabaseAdmin
+        .from('exams')
+        .delete()
+        .eq('id', examId);
+
+    if (error) {
+        console.error('Database delete error (exam):', error);
+        return res.status(500).json({ message: 'Failed to delete exam' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: userId,
+        action_type: 'DELETE_EXAM',
+        table_affected: 'exams',
+        record_id_affected: examId,
+        details: { exam_name: existingExam.name }
+    });
+
+    res.json({ message: 'Exam deleted successfully' });
+});
+
+// ====================================================================
+// ASSIGNMENT EDIT/DELETE
+// ====================================================================
+
+// @desc    Update assignment
+// @route   PUT /api/faculty/assignments/:assignmentId
+// @access  Private (Faculty)
+export const updateAssignment = asyncHandler(async (req, res) => {
+    const { assignmentId } = req.params;
+    const { title, description, dueDate, totalMarks } = req.body;
+    const facultyId = req.user.id;
+
+    const { data: existing } = await supabaseAdmin
+        .from('assignments')
+        .select('faculty_id')
+        .eq('id', assignmentId)
+        .single();
+
+    if (!existing || existing.faculty_id !== facultyId) {
+        return res.status(403).json({ message: 'You can only edit your own assignments' });
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('assignments')
+        .update({
+            title,
+            description,
+            due_date: dueDate,
+            max_marks: totalMarks,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', assignmentId)
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Database update error (assignment):', error);
+        return res.status(500).json({ message: 'Failed to update assignment' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: facultyId,
+        action_type: 'UPDATE_ASSIGNMENT',
+        table_affected: 'assignments',
+        record_id_affected: assignmentId
+    });
+
+    res.json({
+        message: 'Assignment updated successfully',
+        assignment: data
+    });
+});
+
+// @desc    Delete (soft delete) assignment
+// @route   DELETE /api/faculty/assignments/:assignmentId
+// @access  Private (Faculty)
+export const deleteAssignment = asyncHandler(async (req, res) => {
+    const { assignmentId } = req.params;
+    const facultyId = req.user.id;
+
+    const { data: existing } = await supabaseAdmin
+        .from('assignments')
+        .select('faculty_id, title')
+        .eq('id', assignmentId)
+        .single();
+
+    if (!existing || existing.faculty_id !== facultyId) {
+        return res.status(403).json({ message: 'You can only delete your own assignments' });
+    }
+
+    const { error } = await supabaseAdmin
+        .from('assignments')
+        .update({ 
+            is_active: false,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', assignmentId);
+
+    if (error) {
+        console.error('Database update error (soft delete assignment):', error);
+        return res.status(500).json({ message: 'Failed to delete assignment' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: facultyId,
+        action_type: 'DELETE_ASSIGNMENT',
+        table_affected: 'assignments',
+        record_id_affected: assignmentId,
+        details: { title: existing.title }
+    });
+
+    res.json({ message: 'Assignment deleted successfully' });
+});
+
+// ====================================================================
+// GRADES DELETE
+// ====================================================================
+
+// @desc    Delete individual grade
+// @route   DELETE /api/faculty/grades/:examId/:studentId
+// @access  Private (Faculty)
+export const deleteGrade = asyncHandler(async (req, res) => {
+    const { examId, studentId } = req.params;
+    const facultyId = req.user.id;
+
+    const { data: exam } = await supabaseAdmin
+        .from('exams')
+        .select('class:classes(faculty_id)')
+        .eq('id', examId)
+        .single();
+
+    if (!exam || exam.class.faculty_id !== facultyId) {
+        return res.status(403).json({ message: 'You can only delete grades for your own classes' });
+    }
+
+    const { error } = await supabaseAdmin
+        .from('grades')
+        .delete()
+        .eq('exam_id', examId)
+        .eq('student_id', studentId);
+
+    if (error) {
+        console.error('Database delete error (grade):', error);
+        return res.status(500).json({ message: 'Failed to delete grade' });
+    }
+
+    await supabaseAdmin.from('audit_logs').insert({
+        actor_id: facultyId,
+        action_type: 'DELETE_GRADE',
+        table_affected: 'grades',
+        details: { exam_id: examId, student_id: studentId }
+    });
+
+    res.json({ message: 'Grade deleted successfully' });
 });

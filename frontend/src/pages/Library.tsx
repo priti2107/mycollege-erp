@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -109,6 +110,12 @@ export default function Library() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isAddBookDialogOpen, setIsAddBookDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("books");
+  const [isRequestBookDialogOpen, setIsRequestBookDialogOpen] = useState(false);
+  const [selectedBookForRequest, setSelectedBookForRequest] = useState<any>(null);
+  const [requestPurpose, setRequestPurpose] = useState("");
+  const [requestRequiredDate, setRequestRequiredDate] = useState("");
+  const [selectedRequest, setSelectedRequest] = useState<any>(null);
+  const [isViewRequestDialogOpen, setIsViewRequestDialogOpen] = useState(false);
   const [newBook, setNewBook] = useState({
     title: "",
     author: "",
@@ -128,7 +135,7 @@ export default function Library() {
 
   // Fetch library data from API
   const { data: libraryData, isLoading, error, refetch } = useApiQuery(
-    '/admin/library/catalog',
+    '/library/catalog',
     ['library'],
     { enabled: !!user }
   );
@@ -142,9 +149,37 @@ export default function Library() {
 
   // Book creation mutation
   const createBookMutation = useApiMutation('/admin/library/books', 'POST');
+  
+  // Book request mutation
+  const requestBookMutation = useApiMutation('/library/requests', 'POST');
+
+  // Fetch book requests for admin
+  const { data: requestsData, isLoading: requestsLoading, refetch: refetchRequests } = useApiQuery(
+    '/library/requests',
+    ['bookRequests'],
+    { enabled: !!user && user.role === 'admin' }
+  );
+  
+  // Fetch issued books for admin
+  const { data: issuedBooksData, isLoading: issuedBooksLoading, refetch: refetchIssuedBooks } = useApiQuery(
+    '/library/issues',
+    ['issuedBooks'],
+    { enabled: !!user && user.role === 'admin' }
+  );
+  
+  // Update request status mutation
+  const updateRequestMutation = useApiMutation('/library/requests', 'PUT');
 
   const books = libraryData || []; // Backend returns array directly
-  const issuedBooks = []; // This needs a separate endpoint or should be included in the library response
+  const issuedBooks = issuedBooksData || []; // Fetched from /library/issues
+  const allRequests = requestsData || [];
+  
+  // Filter requests - only show pending/approved in Book Requests tab
+  // Issued requests should appear in Issued Books tab
+  const bookRequests = allRequests.filter((req: any) => 
+    req.status === 'pending' || req.status === 'approved'
+  );
+  
   const departments = departmentsData?.departments || [];
 
   const handleLogout = () => {
@@ -192,20 +227,87 @@ export default function Library() {
     }
   };
 
+  const handleRequestBook = (book: any) => {
+    setSelectedBookForRequest(book);
+    setIsRequestBookDialogOpen(true);
+  };
+
+  const handleSubmitRequest = async () => {
+    if (!selectedBookForRequest) return;
+
+    try {
+      await requestBookMutation.mutateAsync({
+        book_id: selectedBookForRequest.id,
+        required_date: requestRequiredDate || undefined,
+        purpose: requestPurpose || undefined
+      });
+
+      toast({
+        title: "Book requested successfully!",
+        description: "Your request has been submitted for admin approval.",
+      });
+
+      setIsRequestBookDialogOpen(false);
+      setSelectedBookForRequest(null);
+      setRequestPurpose("");
+      setRequestRequiredDate("");
+    } catch (error: any) {
+      toast({
+        title: "Failed to request book",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUpdateRequestStatus = async (requestId: string, newStatus: string) => {
+    try {
+      await updateRequestMutation.mutateAsync({
+        url: `/library/requests/${requestId}`,
+        data: { status: newStatus }
+      });
+
+      toast({
+        title: `Request ${newStatus}!`,
+        description: `The book request has been ${newStatus}.`,
+      });
+
+      // Refresh both requests and issued books lists
+      refetchRequests();
+      if (newStatus === 'issued') {
+        refetchIssuedBooks();
+        refetch(); // Also refresh books to update available_copies
+      }
+      setIsViewRequestDialogOpen(false);
+    } catch (error: any) {
+      toast({
+        title: "Failed to update request",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleViewRequest = (request: any) => {
+    setSelectedRequest(request);
+    setIsViewRequestDialogOpen(true);
+  };
+
   const filteredBooks = books.filter(book => {
     const matchesSearch = book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       book.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      book.category.toLowerCase().includes(searchTerm.toLowerCase());
+      (book.category || '').toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesCategory = selectedCategory === "all" || book.category === selectedCategory;
     
     return matchesSearch && matchesCategory;
   });
 
-  const totalBooks = books.reduce((sum, book) => sum + book.totalCopies, 0);
-  const availableBooks = books.reduce((sum, book) => sum + book.availableCopies, 0);
-  const issuedBooksCount = issuedBooks.length;
-  const overdueBooks = issuedBooks.filter(book => book.status === 'Overdue').length;
+  // Database returns snake_case, so use total_copies and available_copies
+  const totalBooks = books.reduce((sum, book) => sum + (book.total_copies || 0), 0);
+  const availableBooks = books.reduce((sum, book) => sum + (book.available_copies || 0), 0);
+  const issuedBooksCount = totalBooks - availableBooks;
+  const overdueBooks = 0; // TODO: Fetch from book_issues table
 
   if (!user) return null;
 
@@ -232,6 +334,68 @@ export default function Library() {
   return (
     <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
       <div className="space-y-6 erp-animate-enter">
+        {/* Request Book Dialog */}
+        <Dialog open={isRequestBookDialogOpen} onOpenChange={setIsRequestBookDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Request Book</DialogTitle>
+              <DialogDescription>
+                Submit a request to borrow this book
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label>Book Title</Label>
+                <p className="text-sm font-medium">{selectedBookForRequest?.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  by {selectedBookForRequest?.author}
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="purpose">Purpose (Optional)</Label>
+                <Textarea
+                  id="purpose"
+                  placeholder="Why do you need this book?"
+                  value={requestPurpose}
+                  onChange={(e) => setRequestPurpose(e.target.value)}
+                  rows={3}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="requiredDate">Required By (Optional)</Label>
+                <Input
+                  id="requiredDate"
+                  type="date"
+                  value={requestRequiredDate}
+                  onChange={(e) => setRequestRequiredDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                className="flex-1"
+                onClick={() => {
+                  setIsRequestBookDialogOpen(false);
+                  setSelectedBookForRequest(null);
+                  setRequestPurpose("");
+                  setRequestRequiredDate("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button 
+                className="flex-1 erp-gradient-bg"
+                onClick={handleSubmitRequest}
+                disabled={!selectedBookForRequest}
+              >
+                Submit Request
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
@@ -239,10 +403,10 @@ export default function Library() {
             <p className="text-muted-foreground">Manage books, issues, and library resources</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
+            {/* <Button variant="outline">
               <Download className="w-4 h-4 mr-2" />
               Export Report
-            </Button>
+            </Button> */}
             {user.role === 'admin' && (
               <Dialog open={isAddBookDialogOpen} onOpenChange={setIsAddBookDialogOpen}>
                 <DialogTrigger asChild>
@@ -390,6 +554,15 @@ export default function Library() {
           >
             Books Catalog
           </Button>
+          {user.role === 'admin' && (
+            <Button 
+              variant={activeTab === "requests" ? "default" : "outline"}
+              onClick={() => setActiveTab("requests")}
+            >
+              <Clock className="w-4 h-4 mr-2" />
+              Book Requests ({bookRequests.length})
+            </Button>
+          )}
           <Button 
             variant={activeTab === "issued" ? "default" : "outline"}
             onClick={() => setActiveTab("issued")}
@@ -470,23 +643,29 @@ export default function Library() {
                       <TableCell className="font-mono">{book.isbn}</TableCell>
                       <TableCell>
                         <div className="text-sm">
-                          <p>Available: <span className="font-medium">{book.availableCopies}</span></p>
-                          <p>Total: <span className="font-medium">{book.totalCopies}</span></p>
+                          <p>Available: <span className="font-medium">{book.available_copies || 0}</span></p>
+                          <p>Total: <span className="font-medium">{book.total_copies || 0}</span></p>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={book.status === 'Available' ? 'default' : 'destructive'}>
-                          {book.status}
+                        <Badge variant={(book.available_copies || 0) > 0 ? 'default' : 'destructive'}>
+                          {(book.available_copies || 0) > 0 ? 'Available' : 'Out of Stock'}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" title="View Details">
                             <Eye className="w-4 h-4" />
                           </Button>
-                          {user.role === 'student' && book.availableCopies > 0 && (
-                            <Button variant="ghost" size="sm">
-                              Issue
+                          {(user.role === 'student' || user.role === 'faculty') && (book.available_copies || 0) > 0 && (
+                            <Button 
+                              variant="default" 
+                              size="sm"
+                              onClick={() => handleRequestBook(book)}
+                              title="Request this book"
+                            >
+                              <BookOpen className="w-4 h-4 mr-1" />
+                              Request
                             </Button>
                           )}
                         </div>
@@ -499,6 +678,219 @@ export default function Library() {
           </Card>
         )}
 
+        {/* Book Requests Table */}
+        {activeTab === "requests" && user.role === 'admin' && (
+          <>
+            {/* View Request Dialog */}
+            <Dialog open={isViewRequestDialogOpen} onOpenChange={setIsViewRequestDialogOpen}>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Book Request Details</DialogTitle>
+                  <DialogDescription>
+                    Review and manage this book request
+                  </DialogDescription>
+                </DialogHeader>
+                {selectedRequest && (
+                  <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Book Title</Label>
+                        <p className="font-medium">{selectedRequest.book?.title || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Author</Label>
+                        <p className="font-medium">{selectedRequest.book?.author || 'N/A'}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Requester</Label>
+                        <p className="font-medium">
+                          {selectedRequest.requester?.first_name} {selectedRequest.requester?.last_name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{selectedRequest.requester?.email}</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Requester Type</Label>
+                        <Badge variant="outline" className="mt-1">
+                          {selectedRequest.requester_type}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Request Date</Label>
+                        <p>{new Date(selectedRequest.request_date).toLocaleDateString()}</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Required By</Label>
+                        <p>{selectedRequest.required_date ? new Date(selectedRequest.required_date).toLocaleDateString() : 'Not specified'}</p>
+                      </div>
+                    </div>
+                    {selectedRequest.purpose && (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Purpose</Label>
+                        <p className="text-sm mt-1">{selectedRequest.purpose}</p>
+                      </div>
+                    )}
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Status</Label>
+                      <Badge 
+                        variant={
+                          selectedRequest.status === 'pending' ? 'secondary' :
+                          selectedRequest.status === 'approved' ? 'default' :
+                          selectedRequest.status === 'issued' ? 'default' :
+                          'destructive'
+                        }
+                        className="mt-1"
+                      >
+                        {selectedRequest.status}
+                      </Badge>
+                    </div>
+                  </div>
+                )}
+                {selectedRequest?.status === 'pending' && (
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      className="flex-1"
+                      onClick={() => handleUpdateRequestStatus(selectedRequest.id, 'rejected')}
+                    >
+                      Reject Request
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      className="flex-1"
+                      onClick={() => handleUpdateRequestStatus(selectedRequest.id, 'approved')}
+                    >
+                      Approve Request
+                    </Button>
+                    <Button 
+                      className="flex-1 erp-gradient-bg"
+                      onClick={() => handleUpdateRequestStatus(selectedRequest.id, 'issued')}
+                    >
+                      Issue Book Now
+                    </Button>
+                  </div>
+                )}
+                {selectedRequest?.status === 'approved' && (
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      className="flex-1"
+                      onClick={() => setIsViewRequestDialogOpen(false)}
+                    >
+                      Close
+                    </Button>
+                    <Button 
+                      className="flex-1 erp-gradient-bg"
+                      onClick={() => handleUpdateRequestStatus(selectedRequest.id, 'issued')}
+                    >
+                      Issue Book Now
+                    </Button>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            <Card className="erp-card">
+              <CardHeader>
+                <CardTitle>Book Requests ({bookRequests.length})</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {requestsLoading ? (
+                  <p className="text-center py-4">Loading requests...</p>
+                ) : bookRequests.length === 0 ? (
+                  <p className="text-center py-4 text-muted-foreground">No book requests found</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Requester</TableHead>
+                        <TableHead>Book</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Request Date</TableHead>
+                        <TableHead>Required By</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bookRequests.map((request: any) => (
+                        <TableRow key={request.id}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">
+                                {request.requester?.first_name} {request.requester?.last_name}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.requester?.email}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{request.book?.title || 'N/A'}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.book?.author || 'N/A'}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{request.requester_type}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            {new Date(request.request_date).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
+                            {request.required_date 
+                              ? new Date(request.required_date).toLocaleDateString()
+                              : '-'
+                            }
+                          </TableCell>
+                          <TableCell>
+                            <Badge 
+                              variant={
+                                request.status === 'pending' ? 'secondary' :
+                                request.status === 'approved' ? 'default' :
+                                request.status === 'issued' ? 'default' :
+                                'destructive'
+                              }
+                            >
+                              {request.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={() => handleViewRequest(request)}
+                              >
+                                <Eye className="w-4 h-4 mr-1" />
+                                View
+                              </Button>
+                              {request.status === 'pending' && (
+                                <Button 
+                                  variant="default" 
+                                  size="sm"
+                                  onClick={() => handleUpdateRequestStatus(request.id, 'issued')}
+                                >
+                                  Issue
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
         {/* Issued Books Table */}
         {activeTab === "issued" && (
           <Card className="erp-card">
@@ -506,58 +898,96 @@ export default function Library() {
               <CardTitle>Issued Books ({issuedBooks.length})</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Student</TableHead>
-                    <TableHead>Book</TableHead>
-                    <TableHead>Issue Date</TableHead>
-                    <TableHead>Due Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Fine</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {issuedBooks.map((issue) => (
-                    <TableRow key={issue.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{issue.studentName}</p>
-                          <p className="text-sm text-muted-foreground">{issue.rollNo}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-medium">{issue.bookTitle}</p>
-                      </TableCell>
-                      <TableCell>{issue.issueDate}</TableCell>
-                      <TableCell>{issue.dueDate}</TableCell>
-                      <TableCell>
-                        <Badge variant={issue.status === 'Active' ? 'default' : 'destructive'}>
-                          {issue.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {issue.fine > 0 ? (
-                          <span className="text-destructive font-medium">₹{issue.fine}</span>
-                        ) : (
-                          <span className="text-muted-foreground">₹0</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Button variant="ghost" size="sm">
-                            Return
-                          </Button>
-                          <Button variant="ghost" size="sm">
-                            Renew
-                          </Button>
-                        </div>
-                      </TableCell>
+              {issuedBooksLoading ? (
+                <p className="text-center py-4">Loading issued books...</p>
+              ) : issuedBooks.length === 0 ? (
+                <p className="text-center py-4 text-muted-foreground">No issued books found</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Borrower</TableHead>
+                      <TableHead>Book</TableHead>
+                      <TableHead>Issue Date</TableHead>
+                      <TableHead>Due Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Fine</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {issuedBooks.map((issue: any) => (
+                      <TableRow key={issue.id}>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">
+                              {issue.user?.first_name} {issue.user?.last_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {issue.user?.email}
+                            </p>
+                            {issue.user?.student_profile?.roll_number && (
+                              <p className="text-xs text-muted-foreground">
+                                Roll: {issue.user.student_profile.roll_number}
+                              </p>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{issue.book?.title || 'N/A'}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {issue.book?.author || 'N/A'}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {issue.issue_date ? new Date(issue.issue_date).toLocaleDateString() : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          {issue.due_date ? new Date(issue.due_date).toLocaleDateString() : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge 
+                            variant={
+                              issue.status === 'Active' ? 'default' : 
+                              issue.status === 'Overdue' || issue.is_overdue ? 'destructive' : 
+                              'secondary'
+                            }
+                          >
+                            {issue.is_overdue ? 'Overdue' : issue.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {(issue.fine_amount || 0) > 0 ? (
+                            <span className="text-destructive font-medium">
+                              ₹{issue.fine_amount}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">₹0</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {issue.status !== 'Returned' && (
+                              <>
+                                <Button variant="ghost" size="sm">
+                                  Return
+                                </Button>
+                                {issue.status === 'Active' && !issue.is_overdue && (
+                                  <Button variant="ghost" size="sm">
+                                    Renew
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         )}

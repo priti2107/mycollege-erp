@@ -10,71 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Trophy, Search, User, TrendingUp, TrendingDown, Download, Eye } from "lucide-react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 
-const mockStudent = {
-  name: "John Smith",
-  email: "john.smith@student.edu",
-  role: "Student",
-  class: "12th Grade - Science",
-  rollNumber: "STU001",
-};
 
-const mockExams = [
-  {
-    id: "1",
-    name: "Mid-term Examination",
-    type: "Mid-term",
-    date: "2024-01-15",
-    status: "completed",
-    subjects: [
-      { name: "Mathematics", maxMarks: 100, obtainedMarks: 95, grade: "A+" },
-      { name: "Physics", maxMarks: 100, obtainedMarks: 88, grade: "A" },
-      { name: "Chemistry", maxMarks: 100, obtainedMarks: 92, grade: "A+" },
-      { name: "Biology", maxMarks: 100, obtainedMarks: 82, grade: "B+" },
-      { name: "English", maxMarks: 100, obtainedMarks: 90, grade: "A" },
-    ],
-    totalMarks: 500,
-    obtainedMarks: 447,
-    percentage: 89.4,
-    grade: "A",
-    rank: 3,
-  },
-  {
-    id: "2",
-    name: "Unit Test 1",
-    type: "Unit Test",
-    date: "2024-01-08",
-    status: "completed",
-    subjects: [
-      { name: "Mathematics", maxMarks: 50, obtainedMarks: 46, grade: "A+" },
-      { name: "Physics", maxMarks: 50, obtainedMarks: 42, grade: "A" },
-      { name: "Chemistry", maxMarks: 50, obtainedMarks: 45, grade: "A+" },
-    ],
-    totalMarks: 150,
-    obtainedMarks: 133,
-    percentage: 88.7,
-    grade: "A",
-    rank: 2,
-  },
-  {
-    id: "3",
-    name: "Final Examination",
-    type: "Final",
-    date: "2024-02-15",
-    status: "upcoming",
-    subjects: [],
-    totalMarks: 500,
-    obtainedMarks: 0,
-    percentage: 0,
-    grade: "-",
-    rank: 0,
-  },
-];
-
-const mockAssignments = [
-  { name: "Physics Lab Report", subject: "Physics", maxMarks: 20, obtainedMarks: 18, grade: "A", date: "2024-01-10" },
-  { name: "Chemistry Project", subject: "Chemistry", maxMarks: 25, obtainedMarks: 23, grade: "A+", date: "2024-01-12" },
-  { name: "Math Problem Set", subject: "Mathematics", maxMarks: 15, obtainedMarks: 14, grade: "A", date: "2024-01-14" },
-];
 
 export default function StudentResults() {
   const navigate = useNavigate();
@@ -99,19 +35,41 @@ export default function StudentResults() {
     { enabled: !!user }
   );
 
-  const exams = resultsData?.exams || [];
-  const assignments = resultsData?.assignments || [];
-
   const handleLogout = () => {
     localStorage.removeItem("user");
     localStorage.removeItem("token");
     navigate("/");
   };
 
-  const filteredExams = exams.filter(exam => {
+  if (!user) return null;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading results...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p className="text-destructive">Error: {error.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const exams = resultsData?.exams || [];
+  const assignments = resultsData?.assignments || [];
+
+  const filteredExams = exams.filter((exam: any) => {
     const matchesSearch = exam.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         exam.type.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = selectedType === "all" || exam.type.toLowerCase() === selectedType.toLowerCase();
+                         exam.type?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesType = selectedType === "all" || exam.type?.toLowerCase() === selectedType.toLowerCase();
     
     return matchesSearch && matchesType;
   });
@@ -130,15 +88,35 @@ export default function StudentResults() {
     return 'destructive';
   };
 
-  const overallStats = {
-    averagePercentage: exams.filter(e => e.status === 'completed').reduce((sum, exam) => sum + exam.percentage, 0) / exams.filter(e => e.status === 'completed').length,
-    bestSubject: "Chemistry",
-    currentRank: 3,
-    totalStudents: 45,
-  };
+  // Calculate overall stats
+  const completedExams = exams.filter((e: any) => e.status === 'completed');
+  const averagePercentage = completedExams.length > 0 
+    ? completedExams.reduce((sum: number, exam: any) => sum + exam.percentage, 0) / completedExams.length 
+    : 0;
+
+  // Find best subject
+  const subjectScores = new Map();
+  completedExams.forEach((exam: any) => {
+    exam.subjects?.forEach((subject: any) => {
+      if (!subjectScores.has(subject.name)) {
+        subjectScores.set(subject.name, []);
+      }
+      subjectScores.get(subject.name).push(subject.percentage);
+    });
+  });
+  
+  let bestSubject = "N/A";
+  let highestAvg = 0;
+  subjectScores.forEach((scores, subjectName) => {
+    const avg = scores.reduce((a: number, b: number) => a + b, 0) / scores.length;
+    if (avg > highestAvg) {
+      highestAvg = avg;
+      bestSubject = subjectName;
+    }
+  });
 
   return (
-    <DashboardLayout userRole="student" user={mockStudent} onLogout={handleLogout}>
+    <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -160,21 +138,23 @@ export default function StudentResults() {
               <Trophy className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">{overallStats.averagePercentage.toFixed(1)}%</div>
-              <Progress value={overallStats.averagePercentage} className="mt-2" />
-              <p className="text-xs text-muted-foreground mt-2">Grade A performance</p>
+              <div className="text-2xl font-bold text-primary">{averagePercentage.toFixed(1)}%</div>
+              <Progress value={averagePercentage} className="mt-2" />
+              <p className="text-xs text-muted-foreground mt-2">
+                {averagePercentage >= 90 ? 'A+ Grade' : averagePercentage >= 80 ? 'A Grade' : averagePercentage >= 70 ? 'B+ Grade' : 'B Grade'}
+              </p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Class Rank</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Exams</CardTitle>
               <TrendingUp className="h-4 w-4 text-green-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">{overallStats.currentRank}</div>
+              <div className="text-2xl font-bold text-primary">{completedExams.length}</div>
               <p className="text-xs text-muted-foreground mt-2">
-                out of {overallStats.totalStudents} students
+                Completed assessments
               </p>
             </CardContent>
           </Card>
@@ -185,19 +165,19 @@ export default function StudentResults() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-lg font-bold">{overallStats.bestSubject}</div>
-              <p className="text-xs text-muted-foreground mt-2">92% average</p>
+              <div className="text-lg font-bold">{bestSubject}</div>
+              <p className="text-xs text-muted-foreground mt-2">Top performer</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Improvement</CardTitle>
-              <TrendingUp className="h-4 w-4 text-green-600" />
+              <CardTitle className="text-sm font-medium">Total Subjects</CardTitle>
+              <Trophy className="h-4 w-4 text-yellow-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">+2.5%</div>
-              <p className="text-xs text-muted-foreground mt-2">vs last term</p>
+              <div className="text-2xl font-bold text-primary">{subjectScores.size}</div>
+              <p className="text-xs text-muted-foreground mt-2">Subjects enrolled</p>
             </CardContent>
           </Card>
         </div>

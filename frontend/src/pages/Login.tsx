@@ -47,7 +47,12 @@ export default function Login() {
           description: `Welcome back, ${data.user.name}!`,
         });
         
-        navigate("/dashboard");
+        // Redirect based on user role
+        if (data.user.role === 'student') {
+          navigate("/student-dashboard");
+        } else {
+          navigate("/dashboard");
+        }
       } else {
         setError(data.message || "Invalid email or password");
       }

@@ -9,34 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar, Search, User, CalendarDays, TrendingUp, TrendingDown } from "lucide-react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 
-const mockStudent = {
-  name: "John Smith",
-  email: "john.smith@student.edu",
-  role: "Student",
-  class: "12th Grade - Science",
-  rollNumber: "STU001",
-};
 
-const mockAttendanceData = [
-  { date: "2024-01-15", subject: "Mathematics", status: "present", period: "1st Period" },
-  { date: "2024-01-15", subject: "Physics", status: "present", period: "2nd Period" },
-  { date: "2024-01-15", subject: "Chemistry", status: "absent", period: "3rd Period" },
-  { date: "2024-01-15", subject: "Biology", status: "present", period: "4th Period" },
-  { date: "2024-01-14", subject: "Mathematics", status: "present", period: "1st Period" },
-  { date: "2024-01-14", subject: "Physics", status: "present", period: "2nd Period" },
-  { date: "2024-01-14", subject: "Chemistry", status: "present", period: "3rd Period" },
-  { date: "2024-01-14", subject: "Biology", status: "late", period: "4th Period" },
-  { date: "2024-01-13", subject: "Mathematics", status: "present", period: "1st Period" },
-  { date: "2024-01-13", subject: "Physics", status: "absent", period: "2nd Period" },
-];
-
-const mockSubjectStats = [
-  { subject: "Mathematics", present: 18, total: 20, percentage: 90 },
-  { subject: "Physics", present: 16, total: 20, percentage: 80 },
-  { subject: "Chemistry", present: 17, total: 20, percentage: 85 },
-  { subject: "Biology", present: 19, total: 20, percentage: 95 },
-  { subject: "English", present: 18, total: 20, percentage: 90 },
-];
 
 export default function StudentAttendance() {
   const navigate = useNavigate();
@@ -54,21 +27,32 @@ export default function StudentAttendance() {
     setUser(JSON.parse(userData));
   }, [navigate]);
 
-  // Fetch subjects for dropdown
-  const { data: subjectsData } = useApiQuery(
-    '/admin/subjects',
-    ['subjects'],
+  // Fetch attendance data from API
+  const { data: attendanceData, isLoading, error } = useApiQuery(
+    '/student/attendance',
+    ['student-attendance'],
     { enabled: !!user }
   );
 
-  const subjects = subjectsData?.subjects || [];
+  // DEBUG LOGGING
+  console.log('=== FRONTEND ATTENDANCE DEBUG ===');
+  console.log('Raw attendanceData from API:', attendanceData);
+  console.log('isLoading:', isLoading);
+  console.log('error:', error);
+  console.log('Type of attendanceData:', typeof attendanceData);
+  console.log('Is Array:', Array.isArray(attendanceData));
+
+  const attendanceRecords = attendanceData || [];
+  console.log('attendanceRecords (after || []):', attendanceRecords);
+  console.log('attendanceRecords length:', attendanceRecords.length);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
+    localStorage.removeItem("token");
     navigate("/");
   };
 
-  const filteredAttendance = mockAttendanceData.filter(record => {
+  const filteredAttendance = attendanceRecords.filter((record: any) => {
     const matchesSearch = record.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          record.date.includes(searchTerm);
     const matchesSubject = selectedSubject === "all" || record.subject === selectedSubject;
@@ -95,14 +79,80 @@ export default function StudentAttendance() {
     }
   };
 
-  const overallStats = {
-    totalDays: mockAttendanceData.length / 4, // Assuming 4 periods per day
-    presentDays: mockAttendanceData.filter(r => r.status === "present").length / 4,
-    percentage: Math.round((mockAttendanceData.filter(r => r.status === "present").length / mockAttendanceData.length) * 100)
-  };
+  // Calculate overall stats
+  const totalRecords = attendanceRecords.length;
+  const presentCount = attendanceRecords.filter((r: any) => r.status === 'present').length;
+  const overallPercentage = totalRecords > 0 ? Math.round((presentCount / totalRecords) * 100) : 0;
+
+  console.log('Overall stats calculated:');
+  console.log('  totalRecords:', totalRecords);
+  console.log('  presentCount:', presentCount);
+  console.log('  overallPercentage:', overallPercentage);
+
+  // Calculate subject-wise stats
+  const subjectStatsMap = new Map();
+  attendanceRecords.forEach((record: any) => {
+    console.log('Processing record for subject stats:', record);
+    if (!subjectStatsMap.has(record.subject)) {
+      subjectStatsMap.set(record.subject, { subject: record.subject, present: 0, total: 0 });
+    }
+    const stat = subjectStatsMap.get(record.subject);
+    stat.total++;
+    if (record.status === 'present') stat.present++;
+  });
+  
+  const subjectStats = Array.from(subjectStatsMap.values()).map(stat => ({
+    ...stat,
+    percentage: stat.total > 0 ? Math.round((stat.present / stat.total) * 100) : 0
+  }));
+
+  console.log('subjectStats calculated:', subjectStats);
+
+  // Get unique subjects for filter
+  const uniqueSubjects = Array.from(new Set(attendanceRecords.map((r: any) => r.subject)));
+  console.log('uniqueSubjects:', uniqueSubjects);
+
+  // Find best subject (highest attendance percentage)
+  let bestSubject = 'N/A';
+  let bestPercentage = 0;
+  
+  console.log('Finding best subject from subjectStats:', subjectStats);
+  subjectStats.forEach(stat => {
+    console.log(`Checking subject "${stat.subject}": ${stat.percentage}% (current best: ${bestPercentage}%)`);
+    if (stat.percentage > bestPercentage) {
+      bestPercentage = stat.percentage;
+      bestSubject = stat.subject;
+      console.log(`  → New best subject: ${bestSubject} with ${bestPercentage}%`);
+    }
+  });
+  
+  console.log('FINAL BEST SUBJECT:', bestSubject, 'with', bestPercentage, '%');
+  console.log('=== END FRONTEND ATTENDANCE DEBUG ===\n');
+
+  if (!user) return null;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p>Loading attendance data...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <p className="text-destructive">Error: {error.message}</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
-    <DashboardLayout userRole="student" user={mockStudent} onLogout={handleLogout}>
+    <DashboardLayout userRole={user.role} user={user} onLogout={handleLogout}>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -124,32 +174,32 @@ export default function StudentAttendance() {
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">{overallStats.percentage}%</div>
+              <div className="text-2xl font-bold text-primary">{overallPercentage}%</div>
               <p className="text-xs text-muted-foreground mt-2">
-                {Math.round(overallStats.presentDays)}/{Math.round(overallStats.totalDays)} days present
+                {presentCount}/{totalRecords} classes present
               </p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">This Month</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Classes</CardTitle>
               <CalendarDays className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">92%</div>
-              <p className="text-xs text-muted-foreground mt-2">23/25 days present</p>
+              <div className="text-2xl font-bold text-green-600">{totalRecords}</div>
+              <p className="text-xs text-muted-foreground mt-2">Attendance recorded</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Trend</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Subjects</CardTitle>
               <TrendingUp className="h-4 w-4 text-green-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">+5%</div>
-              <p className="text-xs text-muted-foreground mt-2">vs last month</p>
+              <div className="text-2xl font-bold text-primary">{subjectStats.length}</div>
+              <p className="text-xs text-muted-foreground mt-2">Subjects enrolled</p>
             </CardContent>
           </Card>
 
@@ -159,8 +209,10 @@ export default function StudentAttendance() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-lg font-bold">Biology</div>
-              <p className="text-xs text-muted-foreground mt-2">95% attendance</p>
+              <div className="text-lg font-bold">{bestSubject}</div>
+              <p className="text-xs text-muted-foreground mt-2">
+                {bestPercentage}% attendance
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -171,18 +223,19 @@ export default function StudentAttendance() {
             <CardTitle>Subject-wise Attendance</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {mockSubjectStats.map((stat, index) => (
-                <div key={index} className="p-4 rounded-lg border">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-medium">{stat.subject}</h3>
-                    <Badge variant={stat.percentage >= 90 ? "default" : stat.percentage >= 80 ? "secondary" : "destructive"}>
-                      {stat.percentage}%
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {stat.present}/{stat.total} classes attended
-                  </p>
+            {subjectStats.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {subjectStats.map((stat, index) => (
+                  <div key={index} className="p-4 rounded-lg border">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-medium">{stat.subject}</h3>
+                      <Badge variant={stat.percentage >= 90 ? "default" : stat.percentage >= 80 ? "secondary" : "destructive"}>
+                        {stat.percentage}%
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {stat.present}/{stat.total} classes attended
+                    </p>
                   <div className="w-full bg-muted rounded-full h-2 mt-2">
                     <div 
                       className={`h-2 rounded-full ${stat.percentage >= 90 ? 'bg-green-500' : stat.percentage >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}
@@ -192,6 +245,9 @@ export default function StudentAttendance() {
                 </div>
               ))}
             </div>
+            ) : (
+              <p className="text-center py-4 text-muted-foreground">No attendance data available</p>
+            )}
           </CardContent>
         </Card>
 
@@ -219,9 +275,9 @@ export default function StudentAttendance() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Subjects</SelectItem>
-                  {subjects.map((subject: any) => (
-                    <SelectItem key={subject.id} value={subject.name}>
-                      {subject.name}
+                  {uniqueSubjects.map((subject: any, index: number) => (
+                    <SelectItem key={index} value={subject}>
+                      {subject}
                     </SelectItem>
                   ))}
                 </SelectContent>

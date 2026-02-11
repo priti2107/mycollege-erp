@@ -52,9 +52,10 @@ export default function Settings() {
     });
   }, [navigate]);
 
-  // Fetch departments for dropdown
+  // Fetch departments for dropdown (use role-appropriate endpoint)
+  const departmentsEndpoint = user?.role === 'admin' ? '/admin/departments' : '/student/departments';
   const { data: departmentsData } = useApiQuery(
-    '/admin/departments',
+    departmentsEndpoint,
     ['departments'],
     { enabled: !!user }
   );

@@ -38,7 +38,7 @@ export function Navbar({ user, onLogout }: NavbarProps) {
       {/* Right Section */}
       <div className="flex items-center gap-4">
         {/* Notifications */}
-        <Button variant="ghost" size="sm" className="relative">
+        {/* <Button variant="ghost" size="sm" className="relative">
           <Bell className="w-5 h-5" />
           <Badge 
             variant="destructive" 
@@ -47,7 +47,7 @@ export function Navbar({ user, onLogout }: NavbarProps) {
             3
           </Badge>
         </Button>
-
+ */}
         {/* User Menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

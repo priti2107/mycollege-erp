@@ -6,6 +6,7 @@ import {
     getStudentResults,
     getStudentFeesSummary,
     getStudentPaymentHistory,
+    getStudentDepartments,
 } from '../controllers/studentController.js';
 
 const router = express.Router();
@@ -31,5 +32,9 @@ router.get('/results', getStudentResults);
 router.get('/fees/current', getStudentFeesSummary);
 // @route   GET /api/student/fees/history
 router.get('/fees/history', getStudentPaymentHistory);
+
+// --- Settings/Profile Helpers ---
+// @route   GET /api/student/departments
+router.get('/departments', getStudentDepartments);
 
 export default router;

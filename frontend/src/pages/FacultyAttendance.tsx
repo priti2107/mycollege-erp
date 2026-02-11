@@ -47,14 +47,28 @@ export default function FacultyAttendance() {
   );
 
   // Fetch student roster for selected class
-  const { data: studentsData, isLoading: studentsLoading } = useApiQuery(
+  const { data: studentsData, isLoading: studentsLoading, refetch: refetchStudents } = useApiQuery(
     `/faculty/attendance/class/${selectedClass}?date=${selectedDate}`,
     ['faculty-class-roster', selectedClass, selectedDate],
     { enabled: !!user && !!selectedClass }
   );
 
+  // Mutation for saving attendance
+  const saveAttendanceMutation = useApiMutation('/faculty/attendance/save', 'POST');
+
   const classes = classesData || [];
-  const students = studentsData || [];
+  const students = studentsData?.students || [];
+
+  // Sync attendance state with fetched data
+  useEffect(() => {
+    if (students && students.length > 0) {
+      const initialAttendance: Record<string, boolean> = {};
+      students.forEach((student: any) => {
+        initialAttendance[student.id] = student.present ?? false;
+      });
+      setAttendance(initialAttendance);
+    }
+  }, [students]);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
@@ -76,7 +90,7 @@ export default function FacultyAttendance() {
     setAttendance(newAttendance);
   };
 
-  const handleSaveAttendance = () => {
+  const handleSaveAttendance = async () => {
     if (!selectedClass) {
       toast({
         title: "Please select a class",
@@ -85,17 +99,37 @@ export default function FacultyAttendance() {
       return;
     }
 
-    const presentCount = Object.values(attendance).filter(Boolean).length;
-    const totalCount = students.length;
+    // Format attendance data for API
+    const attendanceRecords = students.map((student: any) => ({
+      studentId: student.id,
+      isPresent: attendance[student.id] ?? student.present ?? false
+    }));
 
-    toast({
-      title: "Attendance saved successfully!",
-      description: `${presentCount}/${totalCount} students marked present`,
-    });
+    try {
+      await saveAttendanceMutation.mutateAsync({
+        classId: selectedClass,
+        date: selectedDate,
+        attendance: attendanceRecords
+      });
 
-    // Reset form
-    setAttendance({});
-    setSelectedClass("");
+      const presentCount = attendanceRecords.filter(r => r.isPresent).length;
+      const totalCount = students.length;
+
+      toast({
+        title: "Attendance saved successfully!",
+        description: `${presentCount}/${totalCount} students marked present`,
+      });
+
+      // Refetch to show updated data
+      refetchStudents();
+      
+    } catch (error: any) {
+      toast({
+        title: "Failed to save attendance",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    }
   };
 
   const presentCount = Object.values(attendance).filter(Boolean).length;
@@ -132,9 +166,9 @@ export default function FacultyAttendance() {
                     <SelectValue placeholder="Select a class" />
                   </SelectTrigger>
                   <SelectContent>
-                    {classes.map((cls) => (
+                    {classes.map((cls: any) => (
                       <SelectItem key={cls.id} value={cls.id}>
-                        {cls.name} - {cls.time}
+                        {cls.name} {cls.subjectName ? `- ${cls.subjectName}` : ''} ({cls.students} students)
                       </SelectItem>
                     ))}
                   </SelectContent>

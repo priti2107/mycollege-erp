@@ -1558,7 +1558,7 @@ export const assignClasses = asyncHandler(async (req, res) => {
     }
 
     // Audit Log
-    await supabaseAdmin.from('audit_logs').insert({
+    const { error: auditError } = await supabaseAdmin.from('audit_logs').insert({
         actor_id: req.user.id,
         action_type: 'ASSIGN_CLASSES',
         table_affected: 'student_classes',

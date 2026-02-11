@@ -6,7 +6,9 @@ import './config/supabaseClient.js';
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js'; 
 import facultyRoutes from './routes/facultyRoutes.js'; 
-import studentRoutes from './routes/studentRoutes.js'; 
+import studentRoutes from './routes/studentRoutes.js';
+import libraryRoutes from './routes/libraryRoutes.js';
+import librarySettingsRoutes from './routes/librarySettingsRoutes.js';
 
 dotenv.config();
 
@@ -57,7 +59,9 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes); 
 app.use('/api/faculty', facultyRoutes); 
-app.use('/api/student', studentRoutes); 
+app.use('/api/student', studentRoutes);
+app.use('/api/library', libraryRoutes);
+app.use('/api/library-settings', librarySettingsRoutes);
 
 // --- Global Error Handler (Essential for Robustness) ---
 // This is critical for preventing server crashes from unexpected errors.
