@@ -1,0 +1,174 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* College ERP Design System - Magnolia → Tekhelet (Professional Purple Theme) */
+
+@layer base {
+  :root {
+    /* Main backgrounds */
+    --background: 270 40% 97%; /* #F4EFFA Magnolia */
+    --foreground: 276 40% 18%; 
+
+    /* Cards and surfaces */
+    --card: 276 20% 86%; /* #CFC6DA Thistle */
+    --card-foreground: 276 40% 18%;
+
+    /* Popovers and dropdowns */
+    --popover: 276 20% 86%;
+    --popover-foreground: 276 40% 18%;
+
+    /* Primary brand - Tekhelet */
+    --primary: 270 60% 35%; /* #58238D */
+    --primary-light: 270 45% 45%; /* #8160A3 Royal Purple */
+    --primary-dark: 270 70% 25%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary colors - Royal Purple */
+    --secondary: 270 35% 55%; /* #AA9DB9 Rose Quartz */
+    --secondary-foreground: 276 40% 18%;
+
+    /* Muted/subtle colors */
+    --muted: 276 25% 92%; /* light lavender gray */
+    --muted-foreground: 276 25% 35%;
+
+    /* Accent - violet from first palette for CTAs */
+    --accent: 276 100% 55%; /* #7F00FF */
+    --accent-light: 276 100% 65%; /* #993AFE */
+    --accent-foreground: 0 0% 100%;
+
+    /* Warning/Orange */
+    --warning: 25 95% 53%;
+    --warning-light: 25 95% 60%;
+    --warning-foreground: 0 0% 100%;
+
+    /* Destructive/Error */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders and inputs */
+    --border: 270 20% 90%;
+    --input: 270 20% 96%;
+    --ring: 270 70% 35%;
+
+    /* Design tokens */
+    --radius: 1rem;
+    --radius-lg: 1.5rem;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(
+      135deg,
+      hsl(270 60% 35%), /* Tekhelet */
+      hsl(270 45% 45%)  /* Royal Purple */
+    );
+    --gradient-card: linear-gradient(
+      145deg,
+      hsl(var(--card)),
+      hsl(var(--background))
+    );
+    --gradient-accent: linear-gradient(
+      135deg,
+      hsl(276 100% 55%), /* Violet */
+      hsl(276 100% 65%)  /* Veronica */
+    );
+
+    /* Shadows */
+    --shadow-soft: 0 4px 6px -1px hsl(var(--primary) / 0.1);
+    --shadow-card: 0 10px 15px -3px hsl(var(--primary) / 0.08);
+    --shadow-elevated: 0 20px 25px -5px hsl(var(--primary) / 0.12);
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: all 0.15s ease-out;
+
+    /* Sidebar */
+    --sidebar-background: 270 40% 97%; /* Magnolia */
+    --sidebar-foreground: 276 40% 18%;
+    --sidebar-primary: 270 60% 35%; /* Tekhelet */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 270 20% 90%; /* Thistle */
+    --sidebar-accent-foreground: 276 40% 18%;
+    --sidebar-border: 270 20% 90%;
+    --sidebar-ring: 276 100% 55%;
+  }
+
+  .dark {
+    --background: 270 30% 10%;
+    --foreground: 270 30% 95%;
+
+    --card: 270 30% 15%;
+    --card-foreground: 270 30% 95%;
+
+    --popover: 270 30% 15%;
+    --popover-foreground: 270 30% 95%;
+
+    --primary: 270 60% 60%;
+    --primary-foreground: 270 30% 15%;
+
+    --secondary: 270 25% 35%;
+    --secondary-foreground: 270 30% 95%;
+
+    --muted: 270 20% 20%;
+    --muted-foreground: 270 20% 70%;
+
+    --accent: 276 100% 65%;
+    --accent-foreground: 270 30% 95%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 270 30% 95%;
+
+    --border: 270 20% 25%;
+    --input: 270 20% 25%;
+    --ring: 276 100% 65%;
+
+    --sidebar-background: 270 30% 10%;
+    --sidebar-foreground: 270 30% 95%;
+    --sidebar-primary: 270 60% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 270 20% 20%;
+    --sidebar-accent-foreground: 270 30% 95%;
+    --sidebar-border: 270 20% 20%;
+    --sidebar-ring: 276 100% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@layer components {
+  /* ERP Component Styles */
+  .erp-card {
+    @apply bg-card shadow-[var(--shadow-card)] rounded-2xl border border-border/50 backdrop-blur-sm;
+  }
+  
+  .erp-card-hover {
+    @apply transition-[var(--transition-smooth)] hover:shadow-[var(--shadow-elevated)] hover:-translate-y-1;
+  }
+  
+  .erp-gradient-bg {
+    background: var(--gradient-primary);
+  }
+  
+  .erp-accent-gradient {
+    background: var(--gradient-accent);
+  }
+  
+  .erp-animate-enter {
+    @apply animate-in fade-in-0 slide-in-from-bottom-4 duration-500;
+  }
+  
+  .erp-animate-scale {
+    @apply transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98];
+  }
+  
+  .erp-glass {
+    @apply bg-card/80 backdrop-blur-md border border-border/20;
+  }
+}
